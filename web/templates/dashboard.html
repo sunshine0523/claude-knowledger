@@ -11,7 +11,57 @@
     {{ template "nav" . }}
     <main>
       <h1>Knowledger Dashboard</h1>
-      <p>查看知识库总览、索引队列和最近失败任务。</p>
+      <p>查看知识库总览、store type 分布和当前 Web MVP 尚未接入的索引状态。</p>
+
+      <section id="dashboard-root" class="dashboard">
+        <p id="dashboard-message" class="message" hidden></p>
+
+        <div class="stats-grid" aria-label="Knowledge base summary">
+          <article class="stat-card"><span class="stat-label">Total KBs</span><strong id="stat-total-kbs">—</strong></article>
+          <article class="stat-card"><span class="stat-label">Enabled</span><strong id="stat-enabled-kbs">—</strong></article>
+          <article class="stat-card"><span class="stat-label">Disabled</span><strong id="stat-disabled-kbs">—</strong></article>
+          <article class="stat-card"><span class="stat-label">Runtime</span><strong id="stat-runtime-kbs">—</strong></article>
+          <article class="stat-card"><span class="stat-label">Static</span><strong id="stat-static-kbs">—</strong></article>
+        </div>
+
+        <section class="panel">
+          <h2>Store Types</h2>
+          <div id="store-types" class="tag-list"><span class="muted">Loading...</span></div>
+        </section>
+
+        <section class="panel">
+          <h2>Knowledge Bases</h2>
+          <p id="dashboard-empty" class="muted" hidden>No knowledge bases configured.</p>
+          <div class="table-wrap">
+            <table class="kb-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Name</th>
+                  <th>Type</th>
+                  <th>Path</th>
+                  <th>Enabled</th>
+                  <th>Source</th>
+                  <th>Default Mode</th>
+                  <th>Tags</th>
+                </tr>
+              </thead>
+              <tbody id="dashboard-kbs-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <div class="status-grid">
+          <section class="panel status-card">
+            <h2>Index Queue</h2>
+            <p id="indexing-status" class="muted">Loading...</p>
+          </section>
+          <section class="panel status-card">
+            <h2>Recent Failures</h2>
+            <p id="failures-status" class="muted">Loading...</p>
+          </section>
+        </div>
+      </section>
     </main>
   </body>
 </html>

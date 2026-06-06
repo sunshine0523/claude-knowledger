@@ -1,12 +1,69 @@
 {{ define "search_lab.html" }}
 <!doctype html>
 <html lang="zh-CN">
-  <head><meta charset="utf-8"><title>Search Lab</title><link rel="stylesheet" href="/static/styles.css"></head>
+  <head>
+    <meta charset="utf-8">
+    <title>Search Lab</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <script defer src="/static/app.js"></script>
+  </head>
   <body>
     {{ template "nav" . }}
     <main>
       <h1>Search Lab</h1>
-      <p>观察聚合搜索请求、命中结果、score 和 match mode。</p>
+      <p>观察聚合搜索请求、命中结果、score、match mode 和 backend。</p>
+
+      <section class="panel">
+        <form id="search-form" class="search-form">
+          <label>Query <input name="query" required placeholder="SQLite default storage"></label>
+          <label>Limit <input name="limit" type="number" min="1" max="100" value="10"></label>
+          <label>KB IDs <input name="kb_ids" placeholder="default,docs"></label>
+          <label>Search Mode
+            <select name="search_mode">
+              <option value="">default</option>
+              <option value="lexical">lexical</option>
+              <option value="semantic">semantic</option>
+              <option value="hybrid">hybrid</option>
+            </select>
+          </label>
+          <button id="search-submit" type="submit">Search</button>
+        </form>
+      </section>
+
+      <p id="search-message" class="message" hidden></p>
+
+      <section class="panel">
+        <h2>Request Summary</h2>
+        <dl id="search-summary" class="summary-list">
+          <dt>Status</dt><dd>Run a search to see request details.</dd>
+        </dl>
+      </section>
+
+      <section class="panel">
+        <h2>Warnings</h2>
+        <ul id="search-warnings" class="warning-list"><li class="muted">No warnings.</li></ul>
+      </section>
+
+      <section class="panel">
+        <h2>Results</h2>
+        <p id="search-empty" class="muted">Run a search to see results.</p>
+        <div class="table-wrap">
+          <table class="kb-table">
+            <thead>
+              <tr>
+                <th>Title</th>
+                <th>KB</th>
+                <th>Score</th>
+                <th>Match Mode</th>
+                <th>Backend</th>
+                <th>Locator</th>
+                <th>Snippet</th>
+              </tr>
+            </thead>
+            <tbody id="search-results-body"></tbody>
+          </table>
+        </div>
+      </section>
     </main>
   </body>
 </html>
