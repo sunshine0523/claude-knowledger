@@ -69,13 +69,25 @@ func (f *fakeWebService) Search(_ context.Context, opt core.SearchOptions) (serv
 
 func TestDashboardRespondsOK(t *testing.T) {
 	srv := webadapter.NewServer(nil)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	res := httptest.NewRecorder()
-
-	srv.Handler().ServeHTTP(res, req)
+	res := serve(t, srv, http.MethodGet, "/", nil)
 
 	if res.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", res.Code)
+	}
+	if !strings.Contains(res.Body.String(), "dashboard-root") {
+		t.Fatalf("expected dashboard page to contain dashboard-root, got %s", res.Body.String())
+	}
+}
+
+func TestSearchLabRespondsOK(t *testing.T) {
+	srv := webadapter.NewServer(nil)
+	res := serve(t, srv, http.MethodGet, "/search-lab", nil)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", res.Code)
+	}
+	if !strings.Contains(res.Body.String(), "search-form") {
+		t.Fatalf("expected search lab page to contain search-form, got %s", res.Body.String())
 	}
 }
 
@@ -212,6 +224,88 @@ func TestAPISearchReturnsHitsAndPassesOptions(t *testing.T) {
 	}
 	if len(payload.Data.Hits) != 1 || payload.Data.Hits[0].ItemID != "item-1" || payload.Data.Hits[0].MatchMode != "lexical" {
 		t.Fatalf("unexpected hits: %#v", payload.Data.Hits)
+	}
+}
+
+func TestAPIDashboardReturnsServiceUnavailableWithoutService(t *testing.T) {
+	srv := webadapter.NewServer(nil)
+	res := serve(t, srv, http.MethodGet, "/api/dashboard", nil)
+
+	if res.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d body=%s", res.Code, res.Body.String())
+	}
+	assertAPIErrorCode(t, res, "service_unavailable")
+}
+
+func TestAPIDashboardReturnsKnowledgeBaseSummary(t *testing.T) {
+	fake := &fakeWebService{records: []registry.KnowledgeBaseRecord{
+		{
+			KnowledgeBase: core.KnowledgeBase{ID: "default", Name: "Default", StoreType: "sqlite", StoreConfig: map[string]any{"path": "/tmp/default.db"}, Enabled: true, DefaultSearchMode: "hybrid", Tags: []string{"primary"}},
+			Source:        registry.SourceStatic,
+			Deletable:     false,
+		},
+		{
+			KnowledgeBase: core.KnowledgeBase{ID: "docs", Name: "Docs", StoreType: "text", StoreConfig: map[string]any{"path": "/tmp/docs"}, Enabled: false, DefaultSearchMode: "lexical", Tags: []string{"docs", "team"}},
+			Source:        registry.SourceRuntime,
+			Deletable:     true,
+		},
+	}}
+	srv := webadapter.NewServer(fake)
+	res := serve(t, srv, http.MethodGet, "/api/dashboard", nil)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+	var payload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Summary struct {
+				TotalKBs    int            `json:"total_kbs"`
+				EnabledKBs  int            `json:"enabled_kbs"`
+				DisabledKBs int            `json:"disabled_kbs"`
+				RuntimeKBs  int            `json:"runtime_kbs"`
+				StaticKBs   int            `json:"static_kbs"`
+				StoreTypes  map[string]int `json:"store_types"`
+			} `json:"summary"`
+			KnowledgeBases []struct {
+				ID                string   `json:"id"`
+				StoreType         string   `json:"store_type"`
+				Path              string   `json:"path"`
+				Enabled           bool     `json:"enabled"`
+				DefaultSearchMode string   `json:"default_search_mode"`
+				Tags              []string `json:"tags"`
+				Source            string   `json:"source"`
+				Deletable         bool     `json:"deletable"`
+			} `json:"knowledge_bases"`
+			Indexing struct {
+				State   string `json:"state"`
+				Message string `json:"message"`
+			} `json:"indexing"`
+			Failures struct {
+				State   string `json:"state"`
+				Message string `json:"message"`
+			} `json:"failures"`
+		} `json:"data"`
+	}
+	decodeResponse(t, res, &payload)
+
+	if !payload.Success {
+		t.Fatalf("expected success payload")
+	}
+	if payload.Data.Summary.TotalKBs != 2 || payload.Data.Summary.EnabledKBs != 1 || payload.Data.Summary.DisabledKBs != 1 {
+		t.Fatalf("unexpected summary counts: %#v", payload.Data.Summary)
+	}
+	if payload.Data.Summary.StaticKBs != 1 || payload.Data.Summary.RuntimeKBs != 1 {
+		t.Fatalf("unexpected source counts: %#v", payload.Data.Summary)
+	}
+	if payload.Data.Summary.StoreTypes["sqlite"] != 1 || payload.Data.Summary.StoreTypes["text"] != 1 {
+		t.Fatalf("unexpected store type counts: %#v", payload.Data.Summary.StoreTypes)
+	}
+	if len(payload.Data.KnowledgeBases) != 2 || payload.Data.KnowledgeBases[0].ID != "default" || payload.Data.KnowledgeBases[1].ID != "docs" {
+		t.Fatalf("unexpected knowledge bases: %#v", payload.Data.KnowledgeBases)
+	}
+	if payload.Data.Indexing.State != "unsupported" || payload.Data.Failures.State != "unsupported" {
+		t.Fatalf("expected unsupported indexing/failures, got indexing=%#v failures=%#v", payload.Data.Indexing, payload.Data.Failures)
 	}
 }
 
