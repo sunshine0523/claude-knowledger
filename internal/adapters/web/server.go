@@ -8,20 +8,22 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/kindbrave/knowledger/internal/core"
 	"github.com/kindbrave/knowledger/internal/registry"
 	"github.com/kindbrave/knowledger/internal/service"
 )
 
-type knowledgeBaseService interface {
+type webService interface {
 	ListKnowledgeBaseRecords() ([]registry.KnowledgeBaseRecord, error)
 	CreateKnowledgeBase(context.Context, service.CreateKnowledgeBaseInput) (registry.KnowledgeBaseRecord, error)
 	DeleteKnowledgeBase(context.Context, string) error
+	Search(context.Context, core.SearchOptions) (service.SearchResult, error)
 }
 
 type Server struct {
 	tmpl *template.Template
 	mux  *http.ServeMux
-	svc  knowledgeBaseService
+	svc  webService
 }
 
 type apiResponse struct {
@@ -63,11 +65,37 @@ type createKBRequest struct {
 	Tags      []string `json:"tags"`
 }
 
+const (
+	defaultSearchLimit = 10
+	maxSearchLimit     = 100
+)
+
+type searchRequest struct {
+	Query      string   `json:"query"`
+	Limit      *int     `json:"limit"`
+	KBIDs      []string `json:"kb_ids"`
+	SearchMode string   `json:"search_mode"`
+}
+
+type searchHitView struct {
+	ItemID         string         `json:"item_id"`
+	KBID           string         `json:"kb_id"`
+	ItemType       string         `json:"item_type"`
+	Title          string         `json:"title"`
+	Snippet        string         `json:"snippet"`
+	ContentPreview string         `json:"content_preview"`
+	Score          float64        `json:"score"`
+	MatchMode      string         `json:"match_mode"`
+	SourceBackend  string         `json:"source_backend"`
+	Locator        string         `json:"locator"`
+	Metadata       map[string]any `json:"metadata"`
+}
+
 func NewServer(svc any) *Server {
 	tmpl := template.Must(parseTemplates())
 	mux := http.NewServeMux()
 	s := &Server{tmpl: tmpl, mux: mux}
-	if typed, ok := svc.(knowledgeBaseService); ok {
+	if typed, ok := svc.(webService); ok {
 		s.svc = typed
 	}
 	mux.HandleFunc("GET /", s.dashboard)
@@ -77,6 +105,7 @@ func NewServer(svc any) *Server {
 	mux.HandleFunc("GET /api/kbs", s.apiListKBs)
 	mux.HandleFunc("POST /api/kbs", s.apiCreateKB)
 	mux.HandleFunc("DELETE /api/kbs/{id}", s.apiDeleteKB)
+	mux.HandleFunc("POST /api/search", s.apiSearch)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir("web/static"))))
 	return s
 }
@@ -180,6 +209,59 @@ func (s *Server) apiDeleteKB(w http.ResponseWriter, r *http.Request) {
 	writeAPISuccess(w, http.StatusOK, map[string]any{"deleted_id": id})
 }
 
+func (s *Server) apiSearch(w http.ResponseWriter, r *http.Request) {
+	if s.svc == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "service_unavailable", "knowledge base service is unavailable")
+		return
+	}
+	var req searchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
+		return
+	}
+
+	query := strings.TrimSpace(req.Query)
+	if query == "" {
+		writeAPIError(w, http.StatusBadRequest, "invalid_query", "query is required")
+		return
+	}
+
+	limit := defaultSearchLimit
+	if req.Limit != nil {
+		limit = *req.Limit
+	}
+	if limit < 1 || limit > maxSearchLimit {
+		writeAPIError(w, http.StatusBadRequest, "invalid_limit", "limit must be between 1 and 100")
+		return
+	}
+
+	searchMode := strings.TrimSpace(req.SearchMode)
+	if !validSearchMode(searchMode) {
+		writeAPIError(w, http.StatusBadRequest, "invalid_search_mode", "search_mode must be lexical, semantic, hybrid, or empty")
+		return
+	}
+
+	result, err := s.svc.Search(r.Context(), core.SearchOptions{
+		Query:      query,
+		Limit:      limit,
+		KBIDs:      cleanKBIDs(req.KBIDs),
+		SearchMode: searchMode,
+	})
+	if err != nil {
+		writeAPIError(w, statusForError(err), codeForSearchError(err), err.Error())
+		return
+	}
+
+	hits := searchHitsToViews(result.Hits)
+	writeAPISuccessWithMeta(
+		w,
+		http.StatusOK,
+		map[string]any{"query": query, "limit": limit, "hits": hits},
+		result.Warnings,
+		map[string]any{"hit_count": len(hits)},
+	)
+}
+
 func recordsToViews(records []registry.KnowledgeBaseRecord) []kbView {
 	out := make([]kbView, 0, len(records))
 	for _, record := range records {
@@ -204,8 +286,65 @@ func recordToView(record registry.KnowledgeBaseRecord) kbView {
 	}
 }
 
+func cleanKBIDs(ids []string) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func validSearchMode(mode string) bool {
+	switch mode {
+	case "", "lexical", "semantic", "hybrid":
+		return true
+	default:
+		return false
+	}
+}
+
+func searchHitsToViews(hits []core.SearchHit) []searchHitView {
+	out := make([]searchHitView, 0, len(hits))
+	for _, hit := range hits {
+		out = append(out, searchHitView{
+			ItemID:         hit.ItemID,
+			KBID:           hit.KBID,
+			ItemType:       hit.ItemType,
+			Title:          hit.Title,
+			Snippet:        hit.Snippet,
+			ContentPreview: hit.ContentPreview,
+			Score:          hit.Score,
+			MatchMode:      hit.MatchMode,
+			SourceBackend:  hit.SourceBackend,
+			Locator:        hit.Locator,
+			Metadata:       hit.Metadata,
+		})
+	}
+	return out
+}
+
+func codeForSearchError(err error) string {
+	if statusForError(err) == http.StatusInternalServerError {
+		return "search_failed"
+	}
+	return codeForError(err)
+}
+
 func writeAPISuccess(w http.ResponseWriter, status int, data any) {
-	writeJSON(w, status, apiResponse{Success: true, Data: data, Warnings: []string{}, Errors: []apiError{}, Meta: map[string]any{}})
+	writeAPISuccessWithMeta(w, status, data, []string{}, map[string]any{})
+}
+
+func writeAPISuccessWithMeta(w http.ResponseWriter, status int, data any, warnings []string, meta any) {
+	if warnings == nil {
+		warnings = []string{}
+	}
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	writeJSON(w, status, apiResponse{Success: true, Data: data, Warnings: warnings, Errors: []apiError{}, Meta: meta})
 }
 
 func writeAPIError(w http.ResponseWriter, status int, code, message string) {
