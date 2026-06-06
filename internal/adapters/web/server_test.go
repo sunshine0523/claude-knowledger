@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -32,6 +33,39 @@ func (fakeBackend) ListItems(context.Context, core.KnowledgeBase) ([]core.Knowle
 }
 
 func (fakeBackend) SupportsSemantic(core.KnowledgeBase) bool { return false }
+
+type fakeWebService struct {
+	records      []registry.KnowledgeBaseRecord
+	listErr      error
+	searchResult service.SearchResult
+	searchErr    error
+	searchCalled bool
+	lastSearch   core.SearchOptions
+}
+
+func (f *fakeWebService) ListKnowledgeBaseRecords() ([]registry.KnowledgeBaseRecord, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return f.records, nil
+}
+
+func (f *fakeWebService) CreateKnowledgeBase(context.Context, service.CreateKnowledgeBaseInput) (registry.KnowledgeBaseRecord, error) {
+	return registry.KnowledgeBaseRecord{}, nil
+}
+
+func (f *fakeWebService) DeleteKnowledgeBase(context.Context, string) error {
+	return nil
+}
+
+func (f *fakeWebService) Search(_ context.Context, opt core.SearchOptions) (service.SearchResult, error) {
+	f.searchCalled = true
+	f.lastSearch = opt
+	if f.searchErr != nil {
+		return service.SearchResult{}, f.searchErr
+	}
+	return f.searchResult, nil
+}
 
 func TestDashboardRespondsOK(t *testing.T) {
 	srv := webadapter.NewServer(nil)
@@ -60,6 +94,124 @@ func TestAPIListKBsReturnsKnowledgeBases(t *testing.T) {
 	body := res.Body.String()
 	if !strings.Contains(body, "default") || !strings.Contains(body, "static") {
 		t.Fatalf("expected default static KB in response, got %s", body)
+	}
+}
+
+func TestAPISearchReturnsServiceUnavailableWithoutSearchService(t *testing.T) {
+	srv := webadapter.NewServer(nil)
+	res := serve(t, srv, http.MethodPost, "/api/search", []byte(`{"query":"sqlite"}`))
+
+	if res.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d body=%s", res.Code, res.Body.String())
+	}
+	assertAPIErrorCode(t, res, "service_unavailable")
+}
+
+func TestAPISearchRejectsInvalidRequests(t *testing.T) {
+	srv := webadapter.NewServer(&fakeWebService{})
+
+	cases := []struct {
+		name string
+		body []byte
+		code string
+	}{
+		{name: "invalid json", body: []byte("{"), code: "invalid_json"},
+		{name: "empty query", body: []byte(`{"query":"   "}`), code: "invalid_query"},
+		{name: "zero limit", body: []byte(`{"query":"sqlite","limit":0}`), code: "invalid_limit"},
+		{name: "negative limit", body: []byte(`{"query":"sqlite","limit":-1}`), code: "invalid_limit"},
+		{name: "limit too large", body: []byte(`{"query":"sqlite","limit":101}`), code: "invalid_limit"},
+		{name: "invalid search mode", body: []byte(`{"query":"sqlite","limit":10,"search_mode":"vector"}`), code: "invalid_search_mode"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := serve(t, srv, http.MethodPost, "/api/search", tc.body)
+			if res.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d body=%s", res.Code, res.Body.String())
+			}
+			assertAPIErrorCode(t, res, tc.code)
+		})
+	}
+}
+
+func TestAPISearchReturnsHitsAndPassesOptions(t *testing.T) {
+	fake := &fakeWebService{searchResult: service.SearchResult{
+		Hits: []core.SearchHit{{
+			ItemID:         "item-1",
+			KBID:           "default",
+			ItemType:       "note",
+			Title:          "Default DB",
+			Snippet:        "SQLite default storage",
+			ContentPreview: "SQLite default storage content",
+			Score:          0.75,
+			MatchMode:      "lexical",
+			SourceBackend:  "sqlite",
+			Locator:        "knowledge_items:1",
+			Metadata:       map[string]any{"source": "test"},
+		}},
+		Warnings: []string{"semantic path unavailable, lexical fallback used"},
+	}}
+	srv := webadapter.NewServer(fake)
+	res := serve(t, srv, http.MethodPost, "/api/search", []byte(`{"query":" sqlite ","limit":5,"kb_ids":["default","docs"],"search_mode":"hybrid"}`))
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+	if !fake.searchCalled {
+		t.Fatalf("expected Search to be called")
+	}
+	if fake.lastSearch.Query != "sqlite" {
+		t.Fatalf("expected trimmed query sqlite, got %q", fake.lastSearch.Query)
+	}
+	if fake.lastSearch.Limit != 5 {
+		t.Fatalf("expected limit 5, got %d", fake.lastSearch.Limit)
+	}
+	if !reflect.DeepEqual(fake.lastSearch.KBIDs, []string{"default", "docs"}) {
+		t.Fatalf("expected KBIDs [default docs], got %#v", fake.lastSearch.KBIDs)
+	}
+	if fake.lastSearch.SearchMode != "hybrid" {
+		t.Fatalf("expected hybrid search mode, got %q", fake.lastSearch.SearchMode)
+	}
+
+	var payload struct {
+		Success  bool     `json:"success"`
+		Warnings []string `json:"warnings"`
+		Data     struct {
+			Query string `json:"query"`
+			Limit int    `json:"limit"`
+			Hits  []struct {
+				ItemID        string         `json:"item_id"`
+				KBID          string         `json:"kb_id"`
+				ItemType      string         `json:"item_type"`
+				Title         string         `json:"title"`
+				Snippet       string         `json:"snippet"`
+				Score         float64        `json:"score"`
+				MatchMode     string         `json:"match_mode"`
+				SourceBackend string         `json:"source_backend"`
+				Locator       string         `json:"locator"`
+				Metadata      map[string]any `json:"metadata"`
+			} `json:"hits"`
+		} `json:"data"`
+		Meta struct {
+			HitCount int `json:"hit_count"`
+		} `json:"meta"`
+	}
+	decodeResponse(t, res, &payload)
+
+	if !payload.Success {
+		t.Fatalf("expected success response")
+	}
+	if payload.Data.Query != "sqlite" || payload.Data.Limit != 5 {
+		t.Fatalf("unexpected normalized request in response: %#v", payload.Data)
+	}
+	if payload.Meta.HitCount != 1 {
+		t.Fatalf("expected hit_count 1, got %d", payload.Meta.HitCount)
+	}
+	if len(payload.Warnings) != 1 || payload.Warnings[0] != "semantic path unavailable, lexical fallback used" {
+		t.Fatalf("expected warning to round-trip, got %#v", payload.Warnings)
+	}
+	if len(payload.Data.Hits) != 1 || payload.Data.Hits[0].ItemID != "item-1" || payload.Data.Hits[0].MatchMode != "lexical" {
+		t.Fatalf("unexpected hits: %#v", payload.Data.Hits)
 	}
 }
 
@@ -170,5 +322,21 @@ func decodeResponse(t *testing.T, res *httptest.ResponseRecorder, out any) {
 	t.Helper()
 	if err := json.Unmarshal(res.Body.Bytes(), out); err != nil {
 		t.Fatalf("decode response: %v body=%s", err, res.Body.String())
+	}
+}
+
+func assertAPIErrorCode(t *testing.T, res *httptest.ResponseRecorder, expected string) {
+	t.Helper()
+	var payload struct {
+		Errors []struct {
+			Code string `json:"code"`
+		} `json:"errors"`
+	}
+	decodeResponse(t, res, &payload)
+	if len(payload.Errors) == 0 {
+		t.Fatalf("expected error code %q, got no errors in %s", expected, res.Body.String())
+	}
+	if payload.Errors[0].Code != expected {
+		t.Fatalf("expected error code %q, got %q body=%s", expected, payload.Errors[0].Code, res.Body.String())
 	}
 }
