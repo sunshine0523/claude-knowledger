@@ -91,6 +91,20 @@ type searchHitView struct {
 	Metadata       map[string]any `json:"metadata"`
 }
 
+type dashboardSummary struct {
+	TotalKBs    int            `json:"total_kbs"`
+	EnabledKBs  int            `json:"enabled_kbs"`
+	DisabledKBs int            `json:"disabled_kbs"`
+	RuntimeKBs  int            `json:"runtime_kbs"`
+	StaticKBs   int            `json:"static_kbs"`
+	StoreTypes  map[string]int `json:"store_types"`
+}
+
+type dashboardStatus struct {
+	State   string `json:"state"`
+	Message string `json:"message"`
+}
+
 func NewServer(svc any) *Server {
 	tmpl := template.Must(parseTemplates())
 	mux := http.NewServeMux()
@@ -106,6 +120,7 @@ func NewServer(svc any) *Server {
 	mux.HandleFunc("POST /api/kbs", s.apiCreateKB)
 	mux.HandleFunc("DELETE /api/kbs/{id}", s.apiDeleteKB)
 	mux.HandleFunc("POST /api/search", s.apiSearch)
+	mux.HandleFunc("GET /api/dashboard", s.apiDashboard)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir("web/static"))))
 	return s
 }
@@ -262,6 +277,31 @@ func (s *Server) apiSearch(w http.ResponseWriter, r *http.Request) {
 	)
 }
 
+func (s *Server) apiDashboard(w http.ResponseWriter, r *http.Request) {
+	if s.svc == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "service_unavailable", "knowledge base service is unavailable")
+		return
+	}
+	records, err := s.svc.ListKnowledgeBaseRecords()
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "list_kbs_failed", err.Error())
+		return
+	}
+	views := recordsToViews(records)
+	writeAPISuccess(w, http.StatusOK, map[string]any{
+		"summary":         dashboardSummaryFromViews(views),
+		"knowledge_bases": views,
+		"indexing": dashboardStatus{
+			State:   "unsupported",
+			Message: "Index queue metrics are not exposed in the web dashboard MVP.",
+		},
+		"failures": dashboardStatus{
+			State:   "unsupported",
+			Message: "Recent indexing failures are not exposed in the web dashboard MVP.",
+		},
+	})
+}
+
 func recordsToViews(records []registry.KnowledgeBaseRecord) []kbView {
 	out := make([]kbView, 0, len(records))
 	for _, record := range records {
@@ -324,6 +364,28 @@ func searchHitsToViews(hits []core.SearchHit) []searchHitView {
 		})
 	}
 	return out
+}
+
+func dashboardSummaryFromViews(views []kbView) dashboardSummary {
+	summary := dashboardSummary{StoreTypes: map[string]int{}}
+	for _, view := range views {
+		summary.TotalKBs++
+		if view.Enabled {
+			summary.EnabledKBs++
+		} else {
+			summary.DisabledKBs++
+		}
+		switch view.Source {
+		case registry.SourceRuntime:
+			summary.RuntimeKBs++
+		case registry.SourceStatic:
+			summary.StaticKBs++
+		}
+		if view.StoreType != "" {
+			summary.StoreTypes[view.StoreType]++
+		}
+	}
+	return summary
 }
 
 func codeForSearchError(err error) string {
