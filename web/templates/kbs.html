@@ -1,0 +1,74 @@
+{{ define "kbs.html" }}
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="utf-8"><title>Knowledge Bases</title><link rel="stylesheet" href="/static/styles.css"><script defer src="/static/app.js"></script></head>
+  <body>
+    {{ template "nav" . }}
+    <main>
+      <h1>Knowledge Bases</h1>
+      <p>管理知识库配置、启用状态和后端能力。Web 创建的知识库会写入运行时注册表；静态配置文件中的知识库只读展示。</p>
+
+      {{ if .Error }}<p class="error">{{ .Error }}</p>{{ end }}
+      <p id="kb-message" class="message" hidden></p>
+
+      <section class="panel">
+        <h2>新增知识库</h2>
+        <form id="kb-create-form" class="kb-form">
+          <label>ID <input name="id" required pattern="[A-Za-z0-9_.-]+" maxlength="64" placeholder="docs"></label>
+          <label>Name <input name="name" placeholder="Docs"></label>
+          <label>Type
+            <select name="store_type" required>
+              <option value="text">text</option>
+              <option value="sqlite">sqlite</option>
+            </select>
+          </label>
+          <label>Path <input name="path" required placeholder="/path/to/docs-or-db"></label>
+          <label>Tags <input name="tags" placeholder="docs,team"></label>
+          <label class="checkbox"><input type="checkbox" name="enabled" checked> Enabled</label>
+          <button type="submit">Add Knowledge Base</button>
+        </form>
+      </section>
+
+      <section class="panel">
+        <h2>当前知识库</h2>
+        <table class="kb-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Path</th>
+              <th>Enabled</th>
+              <th>Source</th>
+              <th>Tags</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{ range .KnowledgeBases }}
+            <tr data-kb-id="{{ .ID }}" data-kb-source="{{ .Source }}">
+              <td><code>{{ .ID }}</code></td>
+              <td>{{ .Name }}</td>
+              <td>{{ .StoreType }}</td>
+              <td><code>{{ .Path }}</code></td>
+              <td>{{ .Enabled }}</td>
+              <td>{{ .Source }}</td>
+              <td>{{ range .Tags }}<span class="tag">{{ . }}</span>{{ end }}</td>
+              <td>
+                {{ if .Deletable }}
+                <button type="button" class="danger kb-delete" data-kb-id="{{ .ID }}">Delete</button>
+                {{ else }}
+                <button type="button" disabled title="Static knowledge bases are read-only in Web">Static</button>
+                {{ end }}
+              </td>
+            </tr>
+            {{ else }}
+            <tr><td colspan="8">No knowledge bases configured.</td></tr>
+            {{ end }}
+          </tbody>
+        </table>
+      </section>
+    </main>
+  </body>
+</html>
+{{ end }}

@@ -1,0 +1,28 @@
+default_search_mode: auto
+runtime_registry_path: ~/.knowledger/registry.json
+server:
+  address: ":34125"
+knowledge_bases:
+  - id: default
+    name: Default
+    store_type: sqlite
+    enabled: true
+    store_config:
+      path: ~/.knowledger/db
+    indexing:
+      lexical:
+        enabled: true
+      semantic:
+        enabled: true
+        provider: chroma
+        base_url: http://127.0.0.1:8000
+        collection: default
+        sync_mode: async
+
+  # Optional explicit text knowledge base example. Text KBs require a path.
+  - id: docs
+    name: Docs
+    store_type: text
+    enabled: false
+    store_config:
+      path: ./data/docs
