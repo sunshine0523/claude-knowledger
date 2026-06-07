@@ -138,7 +138,7 @@ function renderDashboard(data) {
   setText("#stat-static-kbs", summary.static_kbs);
   renderStoreTypes(summary.store_types || {});
   renderKnowledgeBases(data.knowledge_bases || []);
-  renderStatus("#indexing-status", data.indexing);
+  renderReadiness(data.readiness, data.indexing);
   renderStatus("#failures-status", data.failures);
 }
 
@@ -189,6 +189,22 @@ function renderKnowledgeBases(rows) {
   });
 }
 
+function renderReadiness(readiness, fallbackStatus) {
+  const el = document.querySelector("#indexing-status");
+  if (!el) return;
+  if (!readiness) {
+    renderStatus("#indexing-status", fallbackStatus);
+    return;
+  }
+
+  const searchable = readiness.searchable_kbs == null ? 0 : readiness.searchable_kbs;
+  const lexical = readiness.lexical_configured_kbs == null ? 0 : readiness.lexical_configured_kbs;
+  const semantic = readiness.semantic_configured_kbs == null ? 0 : readiness.semantic_configured_kbs;
+  const notes = readiness.notes || [];
+  const note = notes.length > 0 ? ` ${notes.join(" ")}` : "";
+  el.textContent = `${searchable} searchable KBs; ${lexical} lexical; ${semantic} semantic configured.${note}`;
+}
+
 function renderStatus(selector, status) {
   const el = document.querySelector(selector);
   if (!el) return;
@@ -212,6 +228,7 @@ function setupSearchLab(form) {
         button.disabled = true;
         button.textContent = "Searching...";
       }
+      resetSearchResults("Searching...");
       const response = await fetch("/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -220,6 +237,7 @@ function setupSearchLab(form) {
       const result = await parseAPIResponse(response);
       renderSearchResults(result);
     } catch (error) {
+      resetSearchResults("Search failed. Fix the request and try again.");
       showMessage(message, error.message, true);
     } finally {
       if (button) {
@@ -239,6 +257,20 @@ function searchPayloadFromForm(form) {
     kb_ids: tagsFromInput(data.get("kb_ids") || ""),
     search_mode: data.get("search_mode") || "",
   };
+}
+
+function resetSearchResults(message) {
+  renderSearchSummary({ query: "", limit: "", kb_ids: [], search_mode: "" }, { hit_count: 0 });
+  renderSearchWarnings([]);
+
+  const body = document.querySelector("#search-results-body");
+  if (body) body.replaceChildren();
+
+  const empty = document.querySelector("#search-empty");
+  if (empty) {
+    empty.hidden = false;
+    empty.textContent = message;
+  }
 }
 
 function renderSearchResults(payload) {
@@ -276,6 +308,8 @@ function renderSearchSummary(data, meta) {
   const rows = [
     ["Query", data.query || ""],
     ["Limit", data.limit == null ? "" : data.limit],
+    ["KB IDs", data.kb_ids && data.kb_ids.length > 0 ? data.kb_ids.join(", ") : "all enabled"],
+    ["Search Mode", data.search_mode || "auto"],
     ["Hit Count", meta.hit_count == null ? 0 : meta.hit_count],
   ];
   rows.forEach(([key, value]) => {

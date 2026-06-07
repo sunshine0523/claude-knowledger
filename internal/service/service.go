@@ -68,10 +68,21 @@ func (s *Service) Search(ctx context.Context, opt core.SearchOptions) (SearchRes
 		if !ok {
 			return SearchResult{}, &core.Error{Kind: core.ErrorKindConfig, Message: "backend not registered for store type " + kb.StoreType}
 		}
-		kbHits, err := backend.Search(ctx, kb, opt)
+		effectiveOpt, warning := searchOptionsForKnowledgeBase(opt, kb, backend)
+		if warning != "" {
+			result.Warnings = append(result.Warnings, warning)
+		}
+		kbHits, err := backend.Search(ctx, kb, effectiveOpt)
 		if err != nil {
-			if opt.SearchMode == "hybrid" && backend.SupportsSemantic(kb) {
+			if effectiveOpt.SearchMode == "hybrid" && backend.SupportsSemantic(kb) {
+				fallbackOpt := effectiveOpt
+				fallbackOpt.SearchMode = "lexical"
+				kbHits, fallbackErr := backend.Search(ctx, kb, fallbackOpt)
+				if fallbackErr != nil {
+					return SearchResult{}, fallbackErr
+				}
 				result.Warnings = append(result.Warnings, kb.ID+": semantic path unavailable, lexical fallback used")
+				result.Hits = append(result.Hits, kbHits...)
 				continue
 			}
 			return SearchResult{}, err
@@ -272,6 +283,25 @@ func runtimeToCore(item registry.RuntimeKnowledgeBase) core.KnowledgeBase {
 		Indexing:          item.Indexing,
 		Tags:              item.Tags,
 	}
+}
+
+func searchOptionsForKnowledgeBase(opt core.SearchOptions, kb core.KnowledgeBase, backend core.StoreBackend) (core.SearchOptions, string) {
+	effective := opt
+	requested := opt.SearchMode
+	if requested == "" || requested == "auto" {
+		requested = kb.DefaultSearchMode
+	}
+	if requested == "" || requested == "auto" {
+		requested = "lexical"
+	}
+	if requested == "semantic" || requested == "hybrid" {
+		if !backend.SupportsSemantic(kb) {
+			effective.SearchMode = "lexical"
+			return effective, fmt.Sprintf("%s: %s search is not implemented for %s backend yet; lexical results returned", kb.ID, requested, kb.StoreType)
+		}
+	}
+	effective.SearchMode = requested
+	return effective, ""
 }
 
 func matchesKBFilter(kbID string, filter []string) bool {

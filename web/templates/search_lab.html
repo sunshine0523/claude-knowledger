@@ -11,7 +11,7 @@
     {{ template "nav" . }}
     <main>
       <h1>Search Lab</h1>
-      <p>观察聚合搜索请求、命中结果、score、match mode 和 backend。</p>
+      <p>观察聚合搜索请求、命中结果、score、match mode 和 backend。当前 sqlite/text backend 返回 lexical hits；semantic/hybrid 会通过 warning 或 match mode 显示实际执行路径。</p>
 
       <section class="panel">
         <form id="search-form" class="search-form">
@@ -20,7 +20,7 @@
           <label>KB IDs <input name="kb_ids" placeholder="default,docs"></label>
           <label>Search Mode
             <select name="search_mode">
-              <option value="">default</option>
+              <option value="">auto/default</option>
               <option value="lexical">lexical</option>
               <option value="semantic">semantic</option>
               <option value="hybrid">hybrid</option>

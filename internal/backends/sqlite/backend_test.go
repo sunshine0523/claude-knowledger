@@ -65,3 +65,25 @@ func TestSQLiteBackendRejectsEmptyPath(t *testing.T) {
 		t.Fatalf("expected error for empty sqlite path")
 	}
 }
+
+func TestSQLiteBackendDoesNotReportSemanticQuerySupport(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
+	backend, err := sqlitebackend.New(dbPath)
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	kb := core.KnowledgeBase{
+		ID:          "notes",
+		StoreType:   "sqlite",
+		StoreConfig: map[string]any{"path": dbPath},
+		Enabled:     true,
+		Indexing: map[string]any{
+			"lexical":  map[string]any{"enabled": true},
+			"semantic": map[string]any{"enabled": true},
+		},
+	}
+
+	if backend.SupportsSemantic(kb) {
+		t.Fatalf("sqlite backend should not report semantic query support until semantic query implementation exists")
+	}
+}

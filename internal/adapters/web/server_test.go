@@ -74,8 +74,11 @@ func TestDashboardRespondsOK(t *testing.T) {
 	if res.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", res.Code)
 	}
-	if !strings.Contains(res.Body.String(), "dashboard-root") {
-		t.Fatalf("expected dashboard page to contain dashboard-root, got %s", res.Body.String())
+	body := res.Body.String()
+	for _, expected := range []string{"dashboard-root", "Search Readiness", "Indexing Notes", "dashboard-kbs-body", "/static/app.js"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("expected dashboard page to contain %q, got %s", expected, body)
+		}
 	}
 }
 
@@ -86,8 +89,65 @@ func TestSearchLabRespondsOK(t *testing.T) {
 	if res.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", res.Code)
 	}
-	if !strings.Contains(res.Body.String(), "search-form") {
-		t.Fatalf("expected search lab page to contain search-form, got %s", res.Body.String())
+	body := res.Body.String()
+	for _, expected := range []string{"search-form", "auto/default", "search-summary", "search-warnings", "search-results-body", "/static/app.js"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("expected search lab page to contain %q, got %s", expected, body)
+		}
+	}
+}
+
+func TestStaticAssetsRespondOK(t *testing.T) {
+	srv := webadapter.NewServer(nil)
+
+	js := serve(t, srv, http.MethodGet, "/static/app.js", nil)
+	if js.Code != http.StatusOK {
+		t.Fatalf("expected app.js 200, got %d body=%s", js.Code, js.Body.String())
+	}
+	if !strings.Contains(js.Body.String(), `dataset.knowledger = "ready"`) {
+		t.Fatalf("expected app.js ready marker, got %s", js.Body.String())
+	}
+
+	css := serve(t, srv, http.MethodGet, "/static/styles.css", nil)
+	if css.Code != http.StatusOK {
+		t.Fatalf("expected styles.css 200, got %d body=%s", css.Code, css.Body.String())
+	}
+	if !strings.Contains(css.Body.String(), ".search-form") {
+		t.Fatalf("expected styles.css search form styles, got %s", css.Body.String())
+	}
+}
+
+func TestWebPagesAndAssetsDoNotDependOnWorkingDirectory(t *testing.T) {
+	t.Chdir(t.TempDir())
+	srv := webadapter.NewServer(nil)
+
+	dashboard := serve(t, srv, http.MethodGet, "/", nil)
+	if dashboard.Code != http.StatusOK {
+		t.Fatalf("expected dashboard 200, got %d body=%s", dashboard.Code, dashboard.Body.String())
+	}
+	if !strings.Contains(dashboard.Body.String(), "dashboard-root") {
+		t.Fatalf("expected dashboard-root after cwd change, got %s", dashboard.Body.String())
+	}
+
+	searchLab := serve(t, srv, http.MethodGet, "/search-lab", nil)
+	if searchLab.Code != http.StatusOK {
+		t.Fatalf("expected search lab 200, got %d body=%s", searchLab.Code, searchLab.Body.String())
+	}
+	if !strings.Contains(searchLab.Body.String(), "search-form") {
+		t.Fatalf("expected search-form after cwd change, got %s", searchLab.Body.String())
+	}
+
+	js := serve(t, srv, http.MethodGet, "/static/app.js", nil)
+	if js.Code != http.StatusOK {
+		t.Fatalf("expected app.js 200 after cwd change, got %d body=%s", js.Code, js.Body.String())
+	}
+
+	css := serve(t, srv, http.MethodGet, "/static/styles.css", nil)
+	if css.Code != http.StatusOK {
+		t.Fatalf("expected styles.css 200 after cwd change, got %d body=%s", css.Code, css.Body.String())
+	}
+	if !strings.Contains(css.Body.String(), ".search-form") {
+		t.Fatalf("expected styles.css search form styles after cwd change, got %s", css.Body.String())
 	}
 }
 
@@ -227,6 +287,55 @@ func TestAPISearchReturnsHitsAndPassesOptions(t *testing.T) {
 	}
 }
 
+func TestAPISearchAcceptsAutoModeAndReturnsNormalizedRequest(t *testing.T) {
+	fake := &fakeWebService{searchResult: service.SearchResult{Hits: []core.SearchHit{}}}
+	srv := webadapter.NewServer(fake)
+	res := serve(t, srv, http.MethodPost, "/api/search", []byte(`{"query":" sqlite ","kb_ids":[" default ",""," docs "],"search_mode":"auto"}`))
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+	if fake.lastSearch.SearchMode != "auto" {
+		t.Fatalf("expected auto search mode, got %q", fake.lastSearch.SearchMode)
+	}
+	if !reflect.DeepEqual(fake.lastSearch.KBIDs, []string{"default", "docs"}) {
+		t.Fatalf("expected KBIDs [default docs], got %#v", fake.lastSearch.KBIDs)
+	}
+
+	var payload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Query      string   `json:"query"`
+			Limit      int      `json:"limit"`
+			KBIDs      []string `json:"kb_ids"`
+			SearchMode string   `json:"search_mode"`
+		} `json:"data"`
+		Meta struct {
+			HitCount int `json:"hit_count"`
+		} `json:"meta"`
+	}
+	decodeResponse(t, res, &payload)
+
+	if !payload.Success {
+		t.Fatalf("expected success response")
+	}
+	if payload.Data.Query != "sqlite" {
+		t.Fatalf("expected normalized query sqlite, got %q", payload.Data.Query)
+	}
+	if payload.Data.Limit != 10 {
+		t.Fatalf("expected default limit 10, got %d", payload.Data.Limit)
+	}
+	if !reflect.DeepEqual(payload.Data.KBIDs, []string{"default", "docs"}) {
+		t.Fatalf("expected response KBIDs [default docs], got %#v", payload.Data.KBIDs)
+	}
+	if payload.Data.SearchMode != "auto" {
+		t.Fatalf("expected response search mode auto, got %q", payload.Data.SearchMode)
+	}
+	if payload.Meta.HitCount != 0 {
+		t.Fatalf("expected hit_count 0, got %d", payload.Meta.HitCount)
+	}
+}
+
 func TestAPIDashboardReturnsServiceUnavailableWithoutService(t *testing.T) {
 	srv := webadapter.NewServer(nil)
 	res := serve(t, srv, http.MethodGet, "/api/dashboard", nil)
@@ -240,9 +349,19 @@ func TestAPIDashboardReturnsServiceUnavailableWithoutService(t *testing.T) {
 func TestAPIDashboardReturnsKnowledgeBaseSummary(t *testing.T) {
 	fake := &fakeWebService{records: []registry.KnowledgeBaseRecord{
 		{
-			KnowledgeBase: core.KnowledgeBase{ID: "default", Name: "Default", StoreType: "sqlite", StoreConfig: map[string]any{"path": "/tmp/default.db"}, Enabled: true, DefaultSearchMode: "hybrid", Tags: []string{"primary"}},
+			KnowledgeBase: core.KnowledgeBase{ID: "default", Name: "Default", StoreType: "sqlite", StoreConfig: map[string]any{"path": "/tmp/default.db"}, Enabled: true, DefaultSearchMode: "hybrid", Indexing: map[string]any{"lexical": map[string]any{"enabled": true}, "semantic": map[string]any{"enabled": true}}, Tags: []string{"primary"}},
 			Source:        registry.SourceStatic,
 			Deletable:     false,
+		},
+		{
+			KnowledgeBase: core.KnowledgeBase{ID: "vec", Name: "Vector", StoreType: "chroma", StoreConfig: map[string]any{"path": "/tmp/vec"}, Enabled: true, DefaultSearchMode: "semantic", Tags: []string{"vector"}},
+			Source:        registry.SourceStatic,
+			Deletable:     false,
+		},
+		{
+			KnowledgeBase: core.KnowledgeBase{ID: "disabled-lex", Name: "Disabled Lexical", StoreType: "sqlite", StoreConfig: map[string]any{"path": "/tmp/disabled-lex.db"}, Enabled: true, DefaultSearchMode: "lexical", Indexing: map[string]any{"lexical": map[string]any{"enabled": false}}, Tags: []string{"sqlite"}},
+			Source:        registry.SourceRuntime,
+			Deletable:     true,
 		},
 		{
 			KnowledgeBase: core.KnowledgeBase{ID: "docs", Name: "Docs", StoreType: "text", StoreConfig: map[string]any{"path": "/tmp/docs"}, Enabled: false, DefaultSearchMode: "lexical", Tags: []string{"docs", "team"}},
@@ -285,6 +404,13 @@ func TestAPIDashboardReturnsKnowledgeBaseSummary(t *testing.T) {
 				State   string `json:"state"`
 				Message string `json:"message"`
 			} `json:"failures"`
+			Readiness struct {
+				SearchableKBs            int      `json:"searchable_kbs"`
+				LexicalConfiguredKBs     int      `json:"lexical_configured_kbs"`
+				SemanticConfiguredKBs    int      `json:"semantic_configured_kbs"`
+				SemanticQueryImplemented bool     `json:"semantic_query_implemented"`
+				Notes                    []string `json:"notes"`
+			} `json:"readiness"`
 		} `json:"data"`
 	}
 	decodeResponse(t, res, &payload)
@@ -292,20 +418,26 @@ func TestAPIDashboardReturnsKnowledgeBaseSummary(t *testing.T) {
 	if !payload.Success {
 		t.Fatalf("expected success payload")
 	}
-	if payload.Data.Summary.TotalKBs != 2 || payload.Data.Summary.EnabledKBs != 1 || payload.Data.Summary.DisabledKBs != 1 {
+	if payload.Data.Summary.TotalKBs != 4 || payload.Data.Summary.EnabledKBs != 3 || payload.Data.Summary.DisabledKBs != 1 {
 		t.Fatalf("unexpected summary counts: %#v", payload.Data.Summary)
 	}
-	if payload.Data.Summary.StaticKBs != 1 || payload.Data.Summary.RuntimeKBs != 1 {
+	if payload.Data.Summary.StaticKBs != 2 || payload.Data.Summary.RuntimeKBs != 2 {
 		t.Fatalf("unexpected source counts: %#v", payload.Data.Summary)
 	}
-	if payload.Data.Summary.StoreTypes["sqlite"] != 1 || payload.Data.Summary.StoreTypes["text"] != 1 {
+	if payload.Data.Summary.StoreTypes["sqlite"] != 2 || payload.Data.Summary.StoreTypes["text"] != 1 || payload.Data.Summary.StoreTypes["chroma"] != 1 {
 		t.Fatalf("unexpected store type counts: %#v", payload.Data.Summary.StoreTypes)
 	}
-	if len(payload.Data.KnowledgeBases) != 2 || payload.Data.KnowledgeBases[0].ID != "default" || payload.Data.KnowledgeBases[1].ID != "docs" {
+	if len(payload.Data.KnowledgeBases) != 4 || payload.Data.KnowledgeBases[0].ID != "default" || payload.Data.KnowledgeBases[1].ID != "vec" || payload.Data.KnowledgeBases[2].ID != "disabled-lex" || payload.Data.KnowledgeBases[3].ID != "docs" {
 		t.Fatalf("unexpected knowledge bases: %#v", payload.Data.KnowledgeBases)
 	}
 	if payload.Data.Indexing.State != "unsupported" || payload.Data.Failures.State != "unsupported" {
-		t.Fatalf("expected unsupported indexing/failures, got indexing=%#v failures=%#v", payload.Data.Indexing, payload.Data.Failures)
+		t.Fatalf("expected dashboard states unsupported, got indexing=%#v failures=%#v", payload.Data.Indexing, payload.Data.Failures)
+	}
+	if payload.Data.Readiness.SearchableKBs != 2 || payload.Data.Readiness.LexicalConfiguredKBs != 1 || payload.Data.Readiness.SemanticConfiguredKBs != 1 {
+		t.Fatalf("unexpected readiness counts: %#v", payload.Data.Readiness)
+	}
+	if payload.Data.Readiness.SemanticQueryImplemented {
+		t.Fatalf("expected semantic query implementation to be false, got %#v", payload.Data.Readiness)
 	}
 }
 

@@ -161,10 +161,5 @@ func (b *Backend) ListItems(ctx context.Context, kb core.KnowledgeBase) ([]core.
 }
 
 func (b *Backend) SupportsSemantic(kb core.KnowledgeBase) bool {
-	semantic, ok := kb.Indexing["semantic"].(map[string]any)
-	if !ok {
-		return false
-	}
-	enabled, _ := semantic["enabled"].(bool)
-	return enabled
+	return false
 }

@@ -11,7 +11,7 @@
     {{ template "nav" . }}
     <main>
       <h1>Knowledger Dashboard</h1>
-      <p>查看知识库总览、store type 分布和当前 Web MVP 尚未接入的索引状态。</p>
+      <p>查看知识库总览、store type 分布和当前搜索/索引配置状态。</p>
 
       <section id="dashboard-root" class="dashboard">
         <p id="dashboard-message" class="message" hidden></p>
@@ -53,11 +53,11 @@
 
         <div class="status-grid">
           <section class="panel status-card">
-            <h2>Index Queue</h2>
+            <h2>Search Readiness</h2>
             <p id="indexing-status" class="muted">Loading...</p>
           </section>
           <section class="panel status-card">
-            <h2>Recent Failures</h2>
+            <h2>Indexing Notes</h2>
             <p id="failures-status" class="muted">Loading...</p>
           </section>
         </div>

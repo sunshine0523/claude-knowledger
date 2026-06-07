@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"html/template"
 	"net/http"
-	"path/filepath"
 	"strings"
 
 	"github.com/kindbrave/knowledger/internal/core"
 	"github.com/kindbrave/knowledger/internal/registry"
 	"github.com/kindbrave/knowledger/internal/service"
+	webassets "github.com/kindbrave/knowledger/web"
 )
 
 type webService interface {
@@ -105,6 +105,14 @@ type dashboardStatus struct {
 	Message string `json:"message"`
 }
 
+type dashboardReadiness struct {
+	SearchableKBs            int      `json:"searchable_kbs"`
+	LexicalConfiguredKBs     int      `json:"lexical_configured_kbs"`
+	SemanticConfiguredKBs    int      `json:"semantic_configured_kbs"`
+	SemanticQueryImplemented bool     `json:"semantic_query_implemented"`
+	Notes                    []string `json:"notes"`
+}
+
 func NewServer(svc any) *Server {
 	tmpl := template.Must(parseTemplates())
 	mux := http.NewServeMux()
@@ -121,21 +129,12 @@ func NewServer(svc any) *Server {
 	mux.HandleFunc("DELETE /api/kbs/{id}", s.apiDeleteKB)
 	mux.HandleFunc("POST /api/search", s.apiSearch)
 	mux.HandleFunc("GET /api/dashboard", s.apiDashboard)
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir("web/static"))))
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(webassets.StaticFS()))))
 	return s
 }
 
 func parseTemplates() (*template.Template, error) {
-	for _, pattern := range []string{
-		filepath.Join("web", "templates", "*.html"),
-		filepath.Join("..", "..", "..", "web", "templates", "*.html"),
-	} {
-		tmpl, err := template.ParseGlob(pattern)
-		if err == nil {
-			return tmpl, nil
-		}
-	}
-	return template.ParseGlob(filepath.Join("web", "templates", "*.html"))
+	return template.ParseFS(webassets.TemplateFS(), "*.html")
 }
 
 func (s *Server) Handler() http.Handler { return s.mux }
@@ -252,14 +251,18 @@ func (s *Server) apiSearch(w http.ResponseWriter, r *http.Request) {
 
 	searchMode := strings.TrimSpace(req.SearchMode)
 	if !validSearchMode(searchMode) {
-		writeAPIError(w, http.StatusBadRequest, "invalid_search_mode", "search_mode must be lexical, semantic, hybrid, or empty")
+		writeAPIError(w, http.StatusBadRequest, "invalid_search_mode", "search_mode must be auto, lexical, semantic, hybrid, or empty")
 		return
 	}
+	if searchMode == "" {
+		searchMode = "auto"
+	}
+	kbIDs := cleanKBIDs(req.KBIDs)
 
 	result, err := s.svc.Search(r.Context(), core.SearchOptions{
 		Query:      query,
 		Limit:      limit,
-		KBIDs:      cleanKBIDs(req.KBIDs),
+		KBIDs:      kbIDs,
 		SearchMode: searchMode,
 	})
 	if err != nil {
@@ -271,7 +274,7 @@ func (s *Server) apiSearch(w http.ResponseWriter, r *http.Request) {
 	writeAPISuccessWithMeta(
 		w,
 		http.StatusOK,
-		map[string]any{"query": query, "limit": limit, "hits": hits},
+		map[string]any{"query": query, "limit": limit, "kb_ids": kbIDs, "search_mode": searchMode, "hits": hits},
 		result.Warnings,
 		map[string]any{"hit_count": len(hits)},
 	)
@@ -291,13 +294,14 @@ func (s *Server) apiDashboard(w http.ResponseWriter, r *http.Request) {
 	writeAPISuccess(w, http.StatusOK, map[string]any{
 		"summary":         dashboardSummaryFromViews(views),
 		"knowledge_bases": views,
+		"readiness":       dashboardReadinessFromRecords(records),
 		"indexing": dashboardStatus{
 			State:   "unsupported",
-			Message: "Index queue metrics are not exposed in the web dashboard MVP.",
+			Message: "Runtime indexing status is not exposed by the web dashboard yet; use readiness for configuration-derived search availability.",
 		},
 		"failures": dashboardStatus{
 			State:   "unsupported",
-			Message: "Recent indexing failures are not exposed in the web dashboard MVP.",
+			Message: "Recent indexing failures are not exposed by the web dashboard yet.",
 		},
 	})
 }
@@ -339,7 +343,7 @@ func cleanKBIDs(ids []string) []string {
 
 func validSearchMode(mode string) bool {
 	switch mode {
-	case "", "lexical", "semantic", "hybrid":
+	case "", "auto", "lexical", "semantic", "hybrid":
 		return true
 	default:
 		return false
@@ -386,6 +390,54 @@ func dashboardSummaryFromViews(views []kbView) dashboardSummary {
 		}
 	}
 	return summary
+}
+
+func dashboardReadinessFromRecords(records []registry.KnowledgeBaseRecord) dashboardReadiness {
+	readiness := dashboardReadiness{
+		Notes: []string{"Semantic indexing configuration may exist, but Chroma query execution is not implemented yet; current sqlite/text searches return lexical hits."},
+	}
+	for _, record := range records {
+		kb := record.KnowledgeBase
+		if !kb.Enabled || !searchableStoreType(kb.StoreType) {
+			continue
+		}
+		readiness.SearchableKBs++
+		if lexicalSearchConfigured(kb) {
+			readiness.LexicalConfiguredKBs++
+		}
+		if indexingEnabled(kb.Indexing, "semantic") {
+			readiness.SemanticConfiguredKBs++
+		}
+	}
+	return readiness
+}
+
+func searchableStoreType(storeType string) bool {
+	return storeType == "text" || storeType == "sqlite"
+}
+
+func lexicalSearchConfigured(kb core.KnowledgeBase) bool {
+	if enabled, ok := indexingEnabledValue(kb.Indexing, "lexical"); ok {
+		return enabled
+	}
+	return searchableStoreType(kb.StoreType)
+}
+
+func indexingEnabled(indexing map[string]any, key string) bool {
+	enabled, ok := indexingEnabledValue(indexing, key)
+	return ok && enabled
+}
+
+func indexingEnabledValue(indexing map[string]any, key string) (bool, bool) {
+	if indexing == nil {
+		return false, false
+	}
+	config, ok := indexing[key].(map[string]any)
+	if !ok {
+		return false, false
+	}
+	enabled, ok := config["enabled"].(bool)
+	return enabled, ok
 }
 
 func codeForSearchError(err error) string {
