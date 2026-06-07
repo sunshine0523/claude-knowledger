@@ -3,6 +3,7 @@ module github.com/kindbrave/knowledger
 go 1.24.11
 
 require (
+	github.com/amikos-tech/chroma-go v0.4.1
 	github.com/mark3labs/mcp-go v0.39.1
 	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/spf13/cobra v1.9.1
@@ -11,7 +12,6 @@ require (
 
 require (
 	github.com/Masterminds/semver/v3 v3.4.0 // indirect
-	github.com/amikos-tech/chroma-go v0.4.1 // indirect
 	github.com/amikos-tech/chroma-go-local v0.3.4 // indirect
 	github.com/amikos-tech/pure-onnx v0.0.1 // indirect
 	github.com/amikos-tech/pure-tokenizers v0.1.5 // indirect
@@ -40,5 +40,4 @@ require (
 	golang.org/x/crypto v0.46.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/text v0.32.0 // indirect
-	golang.org/x/tour v0.1.0 // indirect
 )

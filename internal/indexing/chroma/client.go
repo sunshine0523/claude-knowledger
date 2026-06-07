@@ -126,6 +126,7 @@ func (c *client) Query(ctx context.Context, collection string, query string, lim
 		return nil, err
 	}
 
+	limit = normalizeLimit(limit)
 	result, err := col.Query(ctx,
 		chromav2.WithQueryTexts(query),
 		chromav2.WithNResults(limit),
@@ -150,6 +151,13 @@ func (c *client) Query(ctx context.Context, collection string, query string, lim
 		})
 	}
 	return hits, nil
+}
+
+func normalizeLimit(limit int) int {
+	if limit <= 0 {
+		return 10
+	}
+	return limit
 }
 
 func (c *client) Delete(ctx context.Context, collection string, itemID string) error {

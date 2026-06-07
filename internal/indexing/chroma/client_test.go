@@ -1,16 +1,32 @@
-package chroma_test
+package chroma
 
-import (
-	"testing"
-
-	"github.com/kindbrave/knowledger/internal/indexing/chroma"
-)
+import "testing"
 
 func TestConfigEffectiveModeDefaultsToPersistent(t *testing.T) {
-	cfg := chroma.Config{}
+	cfg := Config{}
 
-	if got := cfg.EffectiveMode(); got != chroma.ModePersistent {
-		t.Fatalf("EffectiveMode() = %q, want %q", got, chroma.ModePersistent)
+	if got := cfg.EffectiveMode(); got != ModePersistent {
+		t.Fatalf("EffectiveMode() = %q, want %q", got, ModePersistent)
+	}
+}
+
+func TestNormalizeLimitDefaultsNonPositiveValues(t *testing.T) {
+	tests := []struct {
+		name  string
+		limit int
+		want  int
+	}{
+		{name: "negative limit", limit: -1, want: 10},
+		{name: "zero limit", limit: 0, want: 10},
+		{name: "positive limit", limit: 3, want: 3},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeLimit(tt.limit); got != tt.want {
+				t.Fatalf("normalizeLimit(%d) = %d, want %d", tt.limit, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -26,7 +42,7 @@ func TestScoreFromDistance(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := chroma.ScoreFromDistance(tt.distance); got != tt.want {
+			if got := ScoreFromDistance(tt.distance); got != tt.want {
 				t.Fatalf("ScoreFromDistance(%v) = %v, want %v", tt.distance, got, tt.want)
 			}
 		})
@@ -34,7 +50,7 @@ func TestScoreFromDistance(t *testing.T) {
 }
 
 func TestHitTitleReturnsMetadataTitle(t *testing.T) {
-	hit := chroma.Hit{Metadata: map[string]any{"title": "Core notes"}}
+	hit := Hit{Metadata: map[string]any{"title": "Core notes"}}
 
 	if got := hit.Title(); got != "Core notes" {
 		t.Fatalf("Title() = %q, want %q", got, "Core notes")
