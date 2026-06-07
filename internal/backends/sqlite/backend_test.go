@@ -217,7 +217,7 @@ func TestSQLiteBackendSemanticDeleteFailureRollsBackSQLiteItem(t *testing.T) {
 func TestSQLiteBackendSemanticAddCleanupUsesDetachedContextAfterCommitFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
-	client := &fakeSemanticClient{afterUpsert: cancel}
+	client := &fakeSemanticClient{afterUpsert: cancel, deleteErr: errors.New("chroma cleanup failed")}
 	backend, err := sqlitebackend.New(dbPath, sqlitebackend.WithSemanticClientFactory(func(chroma.Config) (chroma.Client, error) {
 		return client, nil
 	}))
@@ -232,6 +232,9 @@ func TestSQLiteBackendSemanticAddCleanupUsesDetachedContextAfterCommitFailure(t 
 	}
 	if !strings.Contains(err.Error(), "sqlite commit failed after semantic index success") {
 		t.Fatalf("expected commit failure context in error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "semantic cleanup failed") || !strings.Contains(err.Error(), "chroma cleanup failed") {
+		t.Fatalf("expected cleanup failure context in error, got %v", err)
 	}
 	if len(client.deletes) != 1 {
 		t.Fatalf("expected semantic cleanup delete, got %#v", client.deletes)
@@ -259,9 +262,13 @@ func TestSQLiteBackendSemanticDeleteRestoreUsesDetachedContextAfterCommitFailure
 
 	deleteCtx, cancel := context.WithCancel(context.Background())
 	client.afterDelete = cancel
+	client.upsertErr = errors.New("chroma restore failed")
 	err = backend.DeleteItem(deleteCtx, kb, item.ID)
 	if err == nil {
 		t.Fatalf("expected sqlite commit failure after context cancellation")
+	}
+	if !strings.Contains(err.Error(), "semantic restore failed") || !strings.Contains(err.Error(), "chroma restore failed") {
+		t.Fatalf("expected restore failure context in error, got %v", err)
 	}
 	if len(client.upserts) != 2 {
 		t.Fatalf("expected initial upsert and restore upsert, got %#v", client.upserts)
@@ -310,8 +317,57 @@ func TestSQLiteBackendSemanticSearchMapsChromaHits(t *testing.T) {
 			ItemID:   "42",
 			Content:  "semantic snippet",
 			Score:    0.75,
-			Metadata: map[string]any{"title": "semantic result", "source": "fake"},
+			Metadata: map[string]any{"kb_id": "notes", "title": "semantic result", "source": "fake"},
 		}},
+	}
+	backend, err := sqlitebackend.New(dbPath, sqlitebackend.WithSemanticClientFactory(func(chroma.Config) (chroma.Client, error) {
+		return client, nil
+	}))
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	kb := semanticKB(dbPath, t.TempDir())
+
+	hits, err := backend.Search(ctx, kb, core.SearchOptions{Query: "meaning", SearchMode: "semantic", Limit: 3})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("expected 1 hit, got %#v", hits)
+	}
+	hit := hits[0]
+	if hit.ItemID != "42" || hit.KBID != "notes" || hit.ItemType != "note" || hit.Title != "semantic result" || hit.Snippet != "semantic snippet" || hit.ContentPreview != "semantic snippet" || hit.Score != 0.75 || hit.MatchMode != "semantic" || hit.SourceBackend != "chroma" {
+		t.Fatalf("unexpected hit: %#v", hit)
+	}
+	if len(client.queries) != 1 || client.queries[0].collection != "notes" || client.queries[0].query != "meaning" || client.queries[0].limit != 3 {
+		t.Fatalf("unexpected queries: %#v", client.queries)
+	}
+}
+
+func TestSQLiteBackendSemanticSearchFiltersHitsByKBMetadata(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
+	client := &fakeSemanticClient{
+		queryHits: []chroma.Hit{
+			{
+				ItemID:   "wrong-kb",
+				Content:  "other kb snippet",
+				Score:    0.99,
+				Metadata: map[string]any{"kb_id": "other", "title": "other result"},
+			},
+			{
+				ItemID:   "missing-kb",
+				Content:  "missing kb snippet",
+				Score:    0.80,
+				Metadata: map[string]any{"title": "missing kb result"},
+			},
+			{
+				ItemID:   "42",
+				Content:  "semantic snippet",
+				Score:    0.75,
+				Metadata: map[string]any{"kb_id": "notes", "title": "semantic result", "source": "fake"},
+			},
+		},
 	}
 	backend, err := sqlitebackend.New(dbPath, sqlitebackend.WithSemanticClientFactory(func(chroma.Config) (chroma.Client, error) {
 		return client, nil

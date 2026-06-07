@@ -147,8 +147,12 @@ func (b *Backend) Add(ctx context.Context, kb core.KnowledgeBase, input core.Add
 	if err := tx.Commit(); err != nil {
 		cleanupCtx, cancel := cleanupContext(ctx)
 		defer cancel()
-		_ = client.Delete(cleanupCtx, semanticCfg.Collection, item.ID)
-		return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, fmt.Errorf("sqlite commit failed after semantic index success: %w", err)
+		cleanupErr := client.Delete(cleanupCtx, semanticCfg.Collection, item.ID)
+		commitErr := fmt.Errorf("sqlite commit failed after semantic index success: %w", err)
+		if cleanupErr != nil {
+			return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, errors.Join(commitErr, fmt.Errorf("semantic cleanup failed: %w", cleanupErr))
+		}
+		return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, commitErr
 	}
 	return item, core.IngestionResult{Success: true, ItemID: item.ID}, core.IndexStatus{State: "indexed"}, nil
 }
@@ -201,7 +205,7 @@ func (b *Backend) searchSemantic(ctx context.Context, kb core.KnowledgeBase, que
 	if err != nil {
 		return nil, err
 	}
-	return semanticSearchHits(kb.ID, matchMode, hits), nil
+	return semanticSearchHits(kb.ID, matchMode, filterSemanticHits(kb.ID, hits)), nil
 }
 
 func (b *Backend) searchHybrid(ctx context.Context, kb core.KnowledgeBase, query string, limit int) ([]core.SearchHit, error) {
@@ -273,6 +277,18 @@ func scanHits(rows *sql.Rows, kbID string) ([]core.SearchHit, error) {
 		hits = append(hits, core.SearchHit{ItemID: fmt.Sprintf("%d", id), KBID: kbID, ItemType: "note", Title: title, Snippet: content, ContentPreview: content, Score: 1, MatchMode: "lexical", SourceBackend: "sqlite"})
 	}
 	return hits, rows.Err()
+}
+
+func filterSemanticHits(kbID string, hits []chroma.Hit) []chroma.Hit {
+	out := make([]chroma.Hit, 0, len(hits))
+	for _, hit := range hits {
+		hitKBID, ok := hit.Metadata["kb_id"].(string)
+		if !ok || hitKBID != kbID {
+			continue
+		}
+		out = append(out, hit)
+	}
+	return out
 }
 
 func semanticSearchHits(kbID, matchMode string, hits []chroma.Hit) []core.SearchHit {
@@ -394,8 +410,12 @@ func (b *Backend) DeleteItem(ctx context.Context, kb core.KnowledgeBase, itemID 
 		_ = json.Unmarshal([]byte(metadataJSON), &metadata)
 		cleanupCtx, cancel := cleanupContext(ctx)
 		defer cancel()
-		_ = client.Upsert(cleanupCtx, cfg.Collection, chroma.Item{ID: fmt.Sprintf("%d", id), KBID: kb.ID, Title: title, Content: content, Tags: splitTags(tags), Metadata: metadata})
-		return err
+		restoreErr := client.Upsert(cleanupCtx, cfg.Collection, chroma.Item{ID: fmt.Sprintf("%d", id), KBID: kb.ID, Title: title, Content: content, Tags: splitTags(tags), Metadata: metadata})
+		commitErr := fmt.Errorf("sqlite commit failed after semantic delete success: %w", err)
+		if restoreErr != nil {
+			return errors.Join(commitErr, fmt.Errorf("semantic restore failed: %w", restoreErr))
+		}
+		return commitErr
 	}
 	return nil
 }
