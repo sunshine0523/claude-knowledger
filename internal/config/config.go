@@ -176,7 +176,15 @@ func applySQLiteIndexingDefaults(kb *KnowledgeBaseConfig) error {
 	setDefault(semantic, "sync_mode", DefaultChromaSyncMode)
 	setDefault(semantic, "auto_download", true)
 
-	mode, _ := semantic["mode"].(string)
+	value, hasMode := semantic["mode"]
+	mode := ""
+	if hasMode {
+		var ok bool
+		mode, ok = value.(string)
+		if !ok {
+			return fmt.Errorf("knowledge base %q chroma semantic mode must be a string", kb.ID)
+		}
+	}
 	if mode == "" {
 		if _, ok := semantic["base_url"]; ok {
 			mode = DefaultChromaHTTPMode

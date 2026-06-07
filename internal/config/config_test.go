@@ -224,6 +224,21 @@ func TestLoadSQLiteKnowledgeBaseRejectsNonStringPath(t *testing.T) {
 	}
 }
 
+func TestLoadSQLiteKnowledgeBaseRejectsNonStringSemanticMode(t *testing.T) {
+	_, err := loadConfigError(t, `knowledge_bases:
+  - id: notes
+    name: Notes
+    store_type: sqlite
+    enabled: true
+    indexing:
+      semantic:
+        mode: 123
+`)
+	if err == nil {
+		t.Fatalf("expected error for non-string semantic mode")
+	}
+}
+
 func loadConfig(t *testing.T, content string) config.Config {
 	t.Helper()
 	cfg, err := loadConfigError(t, content)
