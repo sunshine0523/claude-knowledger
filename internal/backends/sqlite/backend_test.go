@@ -214,6 +214,63 @@ func TestSQLiteBackendSemanticDeleteFailureRollsBackSQLiteItem(t *testing.T) {
 	}
 }
 
+func TestSQLiteBackendSemanticAddCleanupUsesDetachedContextAfterCommitFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
+	client := &fakeSemanticClient{afterUpsert: cancel}
+	backend, err := sqlitebackend.New(dbPath, sqlitebackend.WithSemanticClientFactory(func(chroma.Config) (chroma.Client, error) {
+		return client, nil
+	}))
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	kb := semanticKB(dbPath, t.TempDir())
+
+	_, _, _, err = backend.Add(ctx, kb, core.AddInput{KBID: "notes", Title: "cleanup", Content: "cleanup content"})
+	if err == nil {
+		t.Fatalf("expected sqlite commit failure after context cancellation")
+	}
+	if !strings.Contains(err.Error(), "sqlite commit failed after semantic index success") {
+		t.Fatalf("expected commit failure context in error, got %v", err)
+	}
+	if len(client.deletes) != 1 {
+		t.Fatalf("expected semantic cleanup delete, got %#v", client.deletes)
+	}
+	if client.deleteCtxCanceled[0] {
+		t.Fatalf("semantic cleanup delete received canceled context")
+	}
+}
+
+func TestSQLiteBackendSemanticDeleteRestoreUsesDetachedContextAfterCommitFailure(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
+	client := &fakeSemanticClient{}
+	backend, err := sqlitebackend.New(dbPath, sqlitebackend.WithSemanticClientFactory(func(chroma.Config) (chroma.Client, error) {
+		return client, nil
+	}))
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	kb := semanticKB(dbPath, t.TempDir())
+	item, _, _, err := backend.Add(ctx, kb, core.AddInput{KBID: "notes", Title: "restore", Content: "restore content"})
+	if err != nil {
+		t.Fatalf("Add returned error: %v", err)
+	}
+
+	deleteCtx, cancel := context.WithCancel(context.Background())
+	client.afterDelete = cancel
+	err = backend.DeleteItem(deleteCtx, kb, item.ID)
+	if err == nil {
+		t.Fatalf("expected sqlite commit failure after context cancellation")
+	}
+	if len(client.upserts) != 2 {
+		t.Fatalf("expected initial upsert and restore upsert, got %#v", client.upserts)
+	}
+	if client.upsertCtxCanceled[1] {
+		t.Fatalf("semantic restore upsert received canceled context")
+	}
+}
+
 func TestSQLiteBackendSemanticClientCacheKeyDistinguishesAutoDownload(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
@@ -300,15 +357,19 @@ func semanticKB(dbPath, chromaRoot string) core.KnowledgeBase {
 }
 
 type fakeSemanticClient struct {
-	upsertErr error
-	queryErr  error
-	deleteErr error
-	closeErr  error
-	queryHits []chroma.Hit
-	upserts   []fakeSemanticUpsert
-	queries   []fakeSemanticQuery
-	deletes   []fakeSemanticDelete
-	closed    bool
+	upsertErr         error
+	queryErr          error
+	deleteErr         error
+	closeErr          error
+	queryHits         []chroma.Hit
+	afterUpsert       func()
+	afterDelete       func()
+	upserts           []fakeSemanticUpsert
+	queries           []fakeSemanticQuery
+	deletes           []fakeSemanticDelete
+	upsertCtxCanceled []bool
+	deleteCtxCanceled []bool
+	closed            bool
 }
 
 type fakeSemanticUpsert struct {
@@ -327,8 +388,13 @@ type fakeSemanticDelete struct {
 	itemID     string
 }
 
-func (f *fakeSemanticClient) Upsert(_ context.Context, collection string, item chroma.Item) error {
+func (f *fakeSemanticClient) Upsert(ctx context.Context, collection string, item chroma.Item) error {
 	f.upserts = append(f.upserts, fakeSemanticUpsert{collection: collection, item: item})
+	f.upsertCtxCanceled = append(f.upsertCtxCanceled, ctx.Err() != nil)
+	if f.afterUpsert != nil {
+		f.afterUpsert()
+		f.afterUpsert = nil
+	}
 	return f.upsertErr
 }
 
@@ -337,8 +403,13 @@ func (f *fakeSemanticClient) Query(_ context.Context, collection string, query s
 	return f.queryHits, f.queryErr
 }
 
-func (f *fakeSemanticClient) Delete(_ context.Context, collection string, itemID string) error {
+func (f *fakeSemanticClient) Delete(ctx context.Context, collection string, itemID string) error {
 	f.deletes = append(f.deletes, fakeSemanticDelete{collection: collection, itemID: itemID})
+	f.deleteCtxCanceled = append(f.deleteCtxCanceled, ctx.Err() != nil)
+	if f.afterDelete != nil {
+		f.afterDelete()
+		f.afterDelete = nil
+	}
 	return f.deleteErr
 }
 

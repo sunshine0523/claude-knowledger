@@ -87,6 +87,10 @@ func prepareDatabasePath(path string) error {
 	return os.MkdirAll(dir, 0o755)
 }
 
+func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+}
+
 func (b *Backend) Add(ctx context.Context, kb core.KnowledgeBase, input core.AddInput) (core.KnowledgeItem, core.IngestionResult, core.IndexStatus, error) {
 	nowTime := time.Now().UTC()
 	now := nowTime.Format(time.RFC3339)
@@ -141,7 +145,9 @@ func (b *Backend) Add(ctx context.Context, kb core.KnowledgeBase, input core.Add
 		return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, fmt.Errorf("semantic index failed; sqlite item rolled back: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		_ = client.Delete(ctx, semanticCfg.Collection, item.ID)
+		cleanupCtx, cancel := cleanupContext(ctx)
+		defer cancel()
+		_ = client.Delete(cleanupCtx, semanticCfg.Collection, item.ID)
 		return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, fmt.Errorf("sqlite commit failed after semantic index success: %w", err)
 	}
 	return item, core.IngestionResult{Success: true, ItemID: item.ID}, core.IndexStatus{State: "indexed"}, nil
@@ -386,7 +392,9 @@ func (b *Backend) DeleteItem(ctx context.Context, kb core.KnowledgeBase, itemID 
 	if err := tx.Commit(); err != nil {
 		metadata := map[string]any{}
 		_ = json.Unmarshal([]byte(metadataJSON), &metadata)
-		_ = client.Upsert(ctx, cfg.Collection, chroma.Item{ID: fmt.Sprintf("%d", id), KBID: kb.ID, Title: title, Content: content, Tags: splitTags(tags), Metadata: metadata})
+		cleanupCtx, cancel := cleanupContext(ctx)
+		defer cancel()
+		_ = client.Upsert(cleanupCtx, cfg.Collection, chroma.Item{ID: fmt.Sprintf("%d", id), KBID: kb.ID, Title: title, Content: content, Tags: splitTags(tags), Metadata: metadata})
 		return err
 	}
 	return nil
