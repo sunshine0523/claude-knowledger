@@ -1,29 +1,42 @@
 package chroma_test
 
 import (
-	"context"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/kindbrave/knowledger/internal/indexing/chroma"
 )
 
-func TestClientQueryPostsToCollectionEndpoint(t *testing.T) {
-	var requestedPath string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestedPath = r.URL.Path
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{}`))
-	}))
-	defer srv.Close()
+func TestConfigEffectiveModeDefaultsToPersistent(t *testing.T) {
+	cfg := chroma.Config{}
 
-	client := chroma.New(srv.URL)
-	_, err := client.Query(context.Background(), "notes", "core", 3)
-	if err != nil {
-		t.Fatalf("Query returned error: %v", err)
+	if got := cfg.EffectiveMode(); got != chroma.ModePersistent {
+		t.Fatalf("EffectiveMode() = %q, want %q", got, chroma.ModePersistent)
 	}
-	if requestedPath != "/api/v1/collections/notes/query" {
-		t.Fatalf("unexpected request path %q", requestedPath)
+}
+
+func TestScoreFromDistance(t *testing.T) {
+	tests := []struct {
+		name     string
+		distance float64
+		want     float64
+	}{
+		{name: "zero distance", distance: 0, want: 1},
+		{name: "unit distance", distance: 1, want: 0.5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := chroma.ScoreFromDistance(tt.distance); got != tt.want {
+				t.Fatalf("ScoreFromDistance(%v) = %v, want %v", tt.distance, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHitTitleReturnsMetadataTitle(t *testing.T) {
+	hit := chroma.Hit{Metadata: map[string]any{"title": "Core notes"}}
+
+	if got := hit.Title(); got != "Core notes" {
+		t.Fatalf("Title() = %q, want %q", got, "Core notes")
 	}
 }
