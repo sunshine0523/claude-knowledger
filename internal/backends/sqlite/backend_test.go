@@ -179,6 +179,72 @@ func TestSQLiteBackendSemanticAddUpsertsAndReturnsIndexed(t *testing.T) {
 	}
 }
 
+func TestSQLiteBackendSemanticDeleteFailureRollsBackSQLiteItem(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
+	client := &fakeSemanticClient{}
+	backend, err := sqlitebackend.New(dbPath, sqlitebackend.WithSemanticClientFactory(func(chroma.Config) (chroma.Client, error) {
+		return client, nil
+	}))
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	kb := semanticKB(dbPath, t.TempDir())
+
+	item, _, _, err := backend.Add(ctx, kb, core.AddInput{KBID: "notes", Title: "keep me", Content: "delete rollback content"})
+	if err != nil {
+		t.Fatalf("Add returned error: %v", err)
+	}
+	client.deleteErr = errors.New("chroma delete failed")
+
+	err = backend.DeleteItem(ctx, kb, item.ID)
+	if err == nil {
+		t.Fatalf("expected semantic delete failure")
+	}
+
+	items, err := backend.ListItems(ctx, kb)
+	if err != nil {
+		t.Fatalf("ListItems returned error: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != item.ID || items[0].Title != "keep me" {
+		t.Fatalf("expected sqlite item to remain after delete failure, got %#v", items)
+	}
+	if len(client.deletes) != 1 || client.deletes[0].collection != "notes" || client.deletes[0].itemID != item.ID {
+		t.Fatalf("unexpected semantic deletes: %#v", client.deletes)
+	}
+}
+
+func TestSQLiteBackendSemanticClientCacheKeyDistinguishesAutoDownload(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
+	var configs []chroma.Config
+	backend, err := sqlitebackend.New(dbPath, sqlitebackend.WithSemanticClientFactory(func(cfg chroma.Config) (chroma.Client, error) {
+		configs = append(configs, cfg)
+		return &fakeSemanticClient{}, nil
+	}))
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	chromaRoot := t.TempDir()
+	withAutoDownload := semanticKB(dbPath, chromaRoot)
+	withoutAutoDownload := semanticKB(dbPath, chromaRoot)
+	withoutAutoDownload.Indexing["semantic"].(map[string]any)["auto_download"] = false
+
+	if _, _, _, err := backend.Add(ctx, withAutoDownload, core.AddInput{KBID: "notes", Title: "auto", Content: "download enabled"}); err != nil {
+		t.Fatalf("Add with auto_download=true returned error: %v", err)
+	}
+	if _, _, _, err := backend.Add(ctx, withoutAutoDownload, core.AddInput{KBID: "notes", Title: "manual", Content: "download disabled"}); err != nil {
+		t.Fatalf("Add with auto_download=false returned error: %v", err)
+	}
+
+	if len(configs) != 2 {
+		t.Fatalf("expected separate semantic clients for different auto_download values, got %d configs: %#v", len(configs), configs)
+	}
+	if !configs[0].AutoDownload || configs[1].AutoDownload {
+		t.Fatalf("expected auto_download configs true then false, got %#v", configs)
+	}
+}
+
 func TestSQLiteBackendSemanticSearchMapsChromaHits(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "knowledge.db")

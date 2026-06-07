@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kindbrave/knowledger/internal/core"
@@ -29,6 +31,7 @@ type Backend struct {
 	db              *sql.DB
 	ftsEnabled      bool
 	semanticFactory chroma.Factory
+	semanticMu      sync.Mutex
 	semanticClients map[string]chroma.Client
 }
 
@@ -332,26 +335,61 @@ func (b *Backend) ListItems(ctx context.Context, kb core.KnowledgeBase) ([]core.
 }
 
 func (b *Backend) DeleteItem(ctx context.Context, kb core.KnowledgeBase, itemID string) error {
-	res, err := b.db.ExecContext(ctx, `DELETE FROM knowledge_items WHERE kb_id = ? AND id = ?`, kb.ID, itemID)
+	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {
+		return err
+	}
+
+	var id int64
+	var title, content, tags, metadataJSON string
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, title, content, tags, metadata_json
+		FROM knowledge_items
+		WHERE kb_id = ? AND id = ?
+	`, kb.ID, itemID).Scan(&id, &title, &content, &tags, &metadataJSON)
+	if err != nil {
+		_ = tx.Rollback()
+		if errors.Is(err, sql.ErrNoRows) {
+			return &core.Error{Kind: core.ErrorKindStore, Message: "knowledge item not found"}
+		}
+		return err
+	}
+
+	res, err := tx.ExecContext(ctx, `DELETE FROM knowledge_items WHERE kb_id = ? AND id = ?`, kb.ID, itemID)
+	if err != nil {
+		_ = tx.Rollback()
 		return err
 	}
 	affected, err := res.RowsAffected()
 	if err != nil {
+		_ = tx.Rollback()
 		return err
 	}
 	if affected == 0 {
+		_ = tx.Rollback()
 		return &core.Error{Kind: core.ErrorKindStore, Message: "knowledge item not found"}
 	}
+
 	cfg, ok := semanticConfig(kb)
 	if !ok {
-		return nil
+		return tx.Commit()
 	}
 	client, err := b.semanticClient(cfg)
 	if err != nil {
+		_ = tx.Rollback()
 		return err
 	}
-	return client.Delete(ctx, cfg.Collection, itemID)
+	if err := client.Delete(ctx, cfg.Collection, itemID); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		metadata := map[string]any{}
+		_ = json.Unmarshal([]byte(metadataJSON), &metadata)
+		_ = client.Upsert(ctx, cfg.Collection, chroma.Item{ID: fmt.Sprintf("%d", id), KBID: kb.ID, Title: title, Content: content, Tags: splitTags(tags), Metadata: metadata})
+		return err
+	}
+	return nil
 }
 
 func splitTags(tags string) []string {
@@ -375,8 +413,16 @@ func (b *Backend) SupportsSemantic(kb core.KnowledgeBase) bool {
 }
 
 func (b *Backend) Close() error {
-	var err error
+	b.semanticMu.Lock()
+	clients := make([]chroma.Client, 0, len(b.semanticClients))
 	for _, client := range b.semanticClients {
+		clients = append(clients, client)
+	}
+	b.semanticClients = nil
+	b.semanticMu.Unlock()
+
+	var err error
+	for _, client := range clients {
 		err = errors.Join(err, client.Close())
 	}
 	if b.db != nil {
@@ -386,6 +432,9 @@ func (b *Backend) Close() error {
 }
 
 func (b *Backend) semanticClient(cfg chroma.Config) (chroma.Client, error) {
+	b.semanticMu.Lock()
+	defer b.semanticMu.Unlock()
+
 	if b.semanticClients == nil {
 		b.semanticClients = map[string]chroma.Client{}
 	}
@@ -406,7 +455,7 @@ func (b *Backend) semanticClient(cfg chroma.Config) (chroma.Client, error) {
 }
 
 func semanticClientKey(cfg chroma.Config) string {
-	return strings.Join([]string{cfg.EffectiveMode(), cfg.BaseURL, cfg.Path}, "\x00")
+	return strings.Join([]string{cfg.EffectiveMode(), cfg.BaseURL, cfg.Path, strconv.FormatBool(cfg.AutoDownload)}, "\x00")
 }
 
 func semanticConfig(kb core.KnowledgeBase) (chroma.Config, bool) {
