@@ -1,12 +1,12 @@
 {{ define "debug.html" }}
 <!doctype html>
 <html lang="zh-CN">
-  <head><meta charset="utf-8"><title>Debug</title><link rel="stylesheet" href="/static/styles.css"></head>
+  <head><meta charset="utf-8"><title>Debug</title><link rel="stylesheet" href="/static/styles.css"><script defer src="/static/app.js"></script></head>
   <body>
     {{ template "nav" . }}
     <main>
-      <h1>MCP / CLI Debug</h1>
-      <p>查看调试请求、响应、warning 和 error。</p>
+      <h1 data-i18n="debug.title">MCP / CLI Debug</h1>
+      <p data-i18n="debug.description">查看调试请求、响应、warning 和 error。</p>
     </main>
   </body>
 </html>

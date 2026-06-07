@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/kindbrave/knowledger/internal/core"
 	"github.com/kindbrave/knowledger/internal/registry"
@@ -15,6 +16,9 @@ import (
 
 type webService interface {
 	ListKnowledgeBaseRecords() ([]registry.KnowledgeBaseRecord, error)
+	ListKnowledgeBaseSummaries(context.Context) ([]service.KnowledgeBaseSummary, error)
+	ListKnowledgeItems(context.Context, string) ([]core.KnowledgeItem, error)
+	DeleteKnowledgeItem(context.Context, string, string) error
 	CreateKnowledgeBase(context.Context, service.CreateKnowledgeBaseInput) (registry.KnowledgeBaseRecord, error)
 	DeleteKnowledgeBase(context.Context, string) error
 	Search(context.Context, core.SearchOptions) (service.SearchResult, error)
@@ -49,6 +53,21 @@ type kbView struct {
 	Tags              []string `json:"tags"`
 	Source            string   `json:"source"`
 	Deletable         bool     `json:"deletable"`
+	ItemCount         int      `json:"item_count"`
+}
+
+type knowledgeItemView struct {
+	ID        string         `json:"id"`
+	KBID      string         `json:"kb_id"`
+	Type      string         `json:"type"`
+	Title     string         `json:"title"`
+	Content   string         `json:"content"`
+	Summary   string         `json:"summary"`
+	SourceRef string         `json:"source_ref"`
+	Metadata  map[string]any `json:"metadata"`
+	Tags      []string       `json:"tags"`
+	CreatedAt string         `json:"created_at"`
+	UpdatedAt string         `json:"updated_at"`
 }
 
 type kbsPageData struct {
@@ -57,12 +76,13 @@ type kbsPageData struct {
 }
 
 type createKBRequest struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	StoreType string   `json:"store_type"`
-	Path      string   `json:"path"`
-	Enabled   *bool    `json:"enabled"`
-	Tags      []string `json:"tags"`
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	StoreType       string   `json:"store_type"`
+	Path            string   `json:"path"`
+	Enabled         *bool    `json:"enabled"`
+	SemanticEnabled *bool    `json:"semantic_enabled"`
+	Tags            []string `json:"tags"`
 }
 
 const (
@@ -122,11 +142,14 @@ func NewServer(svc any) *Server {
 	}
 	mux.HandleFunc("GET /", s.dashboard)
 	mux.HandleFunc("GET /kbs", s.kbs)
+	mux.HandleFunc("GET /knowledge", s.knowledge)
 	mux.HandleFunc("GET /search-lab", s.searchLab)
 	mux.HandleFunc("GET /debug", s.debug)
 	mux.HandleFunc("GET /api/kbs", s.apiListKBs)
 	mux.HandleFunc("POST /api/kbs", s.apiCreateKB)
 	mux.HandleFunc("DELETE /api/kbs/{id}", s.apiDeleteKB)
+	mux.HandleFunc("GET /api/kbs/{id}/items", s.apiListKnowledgeItems)
+	mux.HandleFunc("DELETE /api/kbs/{id}/items/{item_id}", s.apiDeleteKnowledgeItem)
 	mux.HandleFunc("POST /api/search", s.apiSearch)
 	mux.HandleFunc("GET /api/dashboard", s.apiDashboard)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(webassets.StaticFS()))))
@@ -150,14 +173,18 @@ func (s *Server) kbs(w http.ResponseWriter, r *http.Request) {
 		_ = s.tmpl.ExecuteTemplate(w, "kbs.html", data)
 		return
 	}
-	records, err := s.svc.ListKnowledgeBaseRecords()
+	summaries, err := s.svc.ListKnowledgeBaseSummaries(r.Context())
 	if err != nil {
 		data.Error = err.Error()
 		_ = s.tmpl.ExecuteTemplate(w, "kbs.html", data)
 		return
 	}
-	data.KnowledgeBases = recordsToViews(records)
+	data.KnowledgeBases = summariesToViews(summaries)
 	_ = s.tmpl.ExecuteTemplate(w, "kbs.html", data)
+}
+
+func (s *Server) knowledge(w http.ResponseWriter, r *http.Request) {
+	_ = s.tmpl.ExecuteTemplate(w, "knowledge.html", nil)
 }
 
 func (s *Server) searchLab(w http.ResponseWriter, r *http.Request) {
@@ -173,12 +200,12 @@ func (s *Server) apiListKBs(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusServiceUnavailable, "service_unavailable", "knowledge base service is unavailable")
 		return
 	}
-	records, err := s.svc.ListKnowledgeBaseRecords()
+	summaries, err := s.svc.ListKnowledgeBaseSummaries(r.Context())
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "list_kbs_failed", err.Error())
 		return
 	}
-	writeAPISuccess(w, http.StatusOK, map[string]any{"knowledge_bases": recordsToViews(records)})
+	writeAPISuccess(w, http.StatusOK, map[string]any{"knowledge_bases": summariesToViews(summaries)})
 }
 
 func (s *Server) apiCreateKB(w http.ResponseWriter, r *http.Request) {
@@ -192,12 +219,13 @@ func (s *Server) apiCreateKB(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	record, err := s.svc.CreateKnowledgeBase(r.Context(), service.CreateKnowledgeBaseInput{
-		ID:        req.ID,
-		Name:      req.Name,
-		StoreType: req.StoreType,
-		Path:      req.Path,
-		Enabled:   req.Enabled,
-		Tags:      req.Tags,
+		ID:              req.ID,
+		Name:            req.Name,
+		StoreType:       req.StoreType,
+		Path:            req.Path,
+		Enabled:         req.Enabled,
+		SemanticEnabled: req.SemanticEnabled,
+		Tags:            req.Tags,
 	})
 	if err != nil {
 		writeAPIError(w, statusForError(err), codeForError(err), err.Error())
@@ -221,6 +249,58 @@ func (s *Server) apiDeleteKB(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeAPISuccess(w, http.StatusOK, map[string]any{"deleted_id": id})
+}
+
+func (s *Server) apiListKnowledgeItems(w http.ResponseWriter, r *http.Request) {
+	if s.svc == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "service_unavailable", "knowledge base service is unavailable")
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeAPIError(w, http.StatusBadRequest, "missing_id", "knowledge base id is required")
+		return
+	}
+	items, err := s.svc.ListKnowledgeItems(r.Context(), id)
+	if err != nil {
+		writeAPIError(w, statusForError(err), codeForError(err), err.Error())
+		return
+	}
+	summaries, err := s.svc.ListKnowledgeBaseSummaries(r.Context())
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "list_kbs_failed", err.Error())
+		return
+	}
+	var selected kbView
+	for _, view := range summariesToViews(summaries) {
+		if view.ID == id {
+			selected = view
+			break
+		}
+	}
+	writeAPISuccess(w, http.StatusOK, map[string]any{"knowledge_base": selected, "items": knowledgeItemsToViews(items), "item_count": len(items)})
+}
+
+func (s *Server) apiDeleteKnowledgeItem(w http.ResponseWriter, r *http.Request) {
+	if s.svc == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "service_unavailable", "knowledge base service is unavailable")
+		return
+	}
+	kbID := r.PathValue("id")
+	itemID := r.PathValue("item_id")
+	if kbID == "" {
+		writeAPIError(w, http.StatusBadRequest, "missing_id", "knowledge base id is required")
+		return
+	}
+	if itemID == "" {
+		writeAPIError(w, http.StatusBadRequest, "missing_item_id", "knowledge item id is required")
+		return
+	}
+	if err := s.svc.DeleteKnowledgeItem(r.Context(), kbID, itemID); err != nil {
+		writeAPIError(w, statusForError(err), codeForError(err), err.Error())
+		return
+	}
+	writeAPISuccess(w, http.StatusOK, map[string]any{"kb_id": kbID, "deleted_id": itemID})
 }
 
 func (s *Server) apiSearch(w http.ResponseWriter, r *http.Request) {
@@ -290,7 +370,12 @@ func (s *Server) apiDashboard(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, "list_kbs_failed", err.Error())
 		return
 	}
-	views := recordsToViews(records)
+	summaries, err := s.svc.ListKnowledgeBaseSummaries(r.Context())
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "list_kbs_failed", err.Error())
+		return
+	}
+	views := summariesToViews(summaries)
 	writeAPISuccess(w, http.StatusOK, map[string]any{
 		"summary":         dashboardSummaryFromViews(views),
 		"knowledge_bases": views,
@@ -310,6 +395,16 @@ func recordsToViews(records []registry.KnowledgeBaseRecord) []kbView {
 	out := make([]kbView, 0, len(records))
 	for _, record := range records {
 		out = append(out, recordToView(record))
+	}
+	return out
+}
+
+func summariesToViews(summaries []service.KnowledgeBaseSummary) []kbView {
+	out := make([]kbView, 0, len(summaries))
+	for _, summary := range summaries {
+		view := recordToView(summary.Record)
+		view.ItemCount = summary.ItemCount
+		out = append(out, view)
 	}
 	return out
 }
@@ -370,6 +465,33 @@ func searchHitsToViews(hits []core.SearchHit) []searchHitView {
 	return out
 }
 
+func knowledgeItemsToViews(items []core.KnowledgeItem) []knowledgeItemView {
+	out := make([]knowledgeItemView, 0, len(items))
+	for _, item := range items {
+		out = append(out, knowledgeItemView{
+			ID:        item.ID,
+			KBID:      item.KBID,
+			Type:      item.Type,
+			Title:     item.Title,
+			Content:   item.Content,
+			Summary:   item.Summary,
+			SourceRef: item.SourceRef,
+			Metadata:  item.Metadata,
+			Tags:      item.Tags,
+			CreatedAt: formatTime(item.CreatedAt),
+			UpdatedAt: formatTime(item.UpdatedAt),
+		})
+	}
+	return out
+}
+
+func formatTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339)
+}
+
 func dashboardSummaryFromViews(views []kbView) dashboardSummary {
 	summary := dashboardSummary{StoreTypes: map[string]int{}}
 	for _, view := range views {
@@ -394,7 +516,7 @@ func dashboardSummaryFromViews(views []kbView) dashboardSummary {
 
 func dashboardReadinessFromRecords(records []registry.KnowledgeBaseRecord) dashboardReadiness {
 	readiness := dashboardReadiness{
-		Notes: []string{"Semantic indexing configuration may exist, but Chroma query execution is not implemented yet; current sqlite/text searches return lexical hits."},
+		Notes: []string{"SQLite semantic search uses Chroma when semantic indexing is enabled; query failures fall back to lexical results with warnings."},
 	}
 	for _, record := range records {
 		kb := record.KnowledgeBase
@@ -407,6 +529,7 @@ func dashboardReadinessFromRecords(records []registry.KnowledgeBaseRecord) dashb
 		}
 		if indexingEnabled(kb.Indexing, "semantic") {
 			readiness.SemanticConfiguredKBs++
+			readiness.SemanticQueryImplemented = true
 		}
 	}
 	return readiness
@@ -476,10 +599,10 @@ func statusForError(err error) int {
 	if strings.Contains(message, "already exists") || strings.Contains(message, "defined in static config") {
 		return http.StatusConflict
 	}
-	if strings.Contains(message, "not found in runtime registry") {
+	if strings.Contains(message, "not found") {
 		return http.StatusNotFound
 	}
-	if strings.Contains(message, "required") || strings.Contains(message, "unsupported") || strings.Contains(message, "may contain") || strings.Contains(message, "not available") || strings.Contains(message, "not a directory") {
+	if strings.Contains(message, "required") || strings.Contains(message, "unsupported") || strings.Contains(message, "may contain") || strings.Contains(message, "not available") || strings.Contains(message, "not a directory") || strings.Contains(message, "invalid") {
 		return http.StatusBadRequest
 	}
 	return http.StatusInternalServerError
@@ -487,14 +610,20 @@ func statusForError(err error) int {
 
 func codeForError(err error) string {
 	message := err.Error()
+	if strings.Contains(message, "knowledge item not found") {
+		return "item_not_found"
+	}
+	if strings.Contains(message, "knowledge base not found") || strings.Contains(message, "not found in runtime registry") {
+		return "kb_not_found"
+	}
+	if strings.Contains(message, "knowledge item id") || strings.Contains(message, "invalid knowledge item id") {
+		return "invalid_item_id"
+	}
 	if strings.Contains(message, "already exists") {
 		return "duplicate_kb"
 	}
 	if strings.Contains(message, "defined in static config") {
 		return "static_kb_read_only"
-	}
-	if strings.Contains(message, "not found in runtime registry") {
-		return "kb_not_found"
 	}
 	if strings.Contains(message, "unsupported") {
 		return "unsupported_store_type"

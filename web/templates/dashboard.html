@@ -10,40 +10,40 @@
   <body>
     {{ template "nav" . }}
     <main>
-      <h1>Knowledger Dashboard</h1>
-      <p>查看知识库总览、store type 分布和当前搜索/索引配置状态。</p>
+      <h1 data-i18n="dashboard.title">Knowledger Dashboard</h1>
+      <p data-i18n="dashboard.description">查看知识库总览、store type 分布和当前搜索/索引配置状态。</p>
 
       <section id="dashboard-root" class="dashboard">
         <p id="dashboard-message" class="message" hidden></p>
 
         <div class="stats-grid" aria-label="Knowledge base summary">
-          <article class="stat-card"><span class="stat-label">Total KBs</span><strong id="stat-total-kbs">—</strong></article>
-          <article class="stat-card"><span class="stat-label">Enabled</span><strong id="stat-enabled-kbs">—</strong></article>
-          <article class="stat-card"><span class="stat-label">Disabled</span><strong id="stat-disabled-kbs">—</strong></article>
-          <article class="stat-card"><span class="stat-label">Runtime</span><strong id="stat-runtime-kbs">—</strong></article>
-          <article class="stat-card"><span class="stat-label">Static</span><strong id="stat-static-kbs">—</strong></article>
+          <article class="stat-card"><span class="stat-label" data-i18n="dashboard.totalKBs">Total KBs</span><strong id="stat-total-kbs">—</strong></article>
+          <article class="stat-card"><span class="stat-label" data-i18n="dashboard.enabled">Enabled</span><strong id="stat-enabled-kbs">—</strong></article>
+          <article class="stat-card"><span class="stat-label" data-i18n="dashboard.disabled">Disabled</span><strong id="stat-disabled-kbs">—</strong></article>
+          <article class="stat-card"><span class="stat-label" data-i18n="dashboard.runtime">Runtime</span><strong id="stat-runtime-kbs">—</strong></article>
+          <article class="stat-card"><span class="stat-label" data-i18n="dashboard.static">Static</span><strong id="stat-static-kbs">—</strong></article>
         </div>
 
         <section class="panel">
-          <h2>Store Types</h2>
-          <div id="store-types" class="tag-list"><span class="muted">Loading...</span></div>
+          <h2 data-i18n="dashboard.storeTypes">Store Types</h2>
+          <div id="store-types" class="tag-list"><span class="muted" data-i18n="common.loading">Loading...</span></div>
         </section>
 
         <section class="panel">
-          <h2>Knowledge Bases</h2>
-          <p id="dashboard-empty" class="muted" hidden>No knowledge bases configured.</p>
+          <h2 data-i18n="nav.kbs">Knowledge Bases</h2>
+          <p id="dashboard-empty" class="muted" hidden data-i18n="kbs.empty">No knowledge bases configured.</p>
           <div class="table-wrap">
             <table class="kb-table">
               <thead>
                 <tr>
-                  <th>ID</th>
-                  <th>Name</th>
-                  <th>Type</th>
-                  <th>Path</th>
-                  <th>Enabled</th>
-                  <th>Source</th>
-                  <th>Default Mode</th>
-                  <th>Tags</th>
+                  <th data-i18n="common.id">ID</th>
+                  <th data-i18n="common.name">Name</th>
+                  <th data-i18n="common.type">Type</th>
+                  <th data-i18n="common.path">Path</th>
+                  <th data-i18n="common.enabled">Enabled</th>
+                  <th data-i18n="common.source">Source</th>
+                  <th data-i18n="common.defaultMode">Default Mode</th>
+                  <th data-i18n="common.tags">Tags</th>
                 </tr>
               </thead>
               <tbody id="dashboard-kbs-body"></tbody>
@@ -53,12 +53,12 @@
 
         <div class="status-grid">
           <section class="panel status-card">
-            <h2>Search Readiness</h2>
-            <p id="indexing-status" class="muted">Loading...</p>
+            <h2 data-i18n="dashboard.searchReadiness">Search Readiness</h2>
+            <p id="indexing-status" class="muted" data-i18n="common.loading">Loading...</p>
           </section>
           <section class="panel status-card">
-            <h2>Indexing Notes</h2>
-            <p id="failures-status" class="muted">Loading...</p>
+            <h2 data-i18n="dashboard.indexingNotes">Indexing Notes</h2>
+            <p id="failures-status" class="muted" data-i18n="common.loading">Loading...</p>
           </section>
         </div>
       </section>

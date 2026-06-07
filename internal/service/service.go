@@ -6,6 +6,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/kindbrave/knowledger/internal/config"
@@ -18,15 +19,21 @@ type SearchResult struct {
 	Warnings []string
 }
 
+type KnowledgeBaseSummary struct {
+	Record    registry.KnowledgeBaseRecord
+	ItemCount int
+}
+
 type BackendBuilder func([]core.KnowledgeBase) (map[string]core.StoreBackend, error)
 
 type CreateKnowledgeBaseInput struct {
-	ID        string
-	Name      string
-	StoreType string
-	Path      string
-	Enabled   *bool
-	Tags      []string
+	ID              string
+	Name            string
+	StoreType       string
+	Path            string
+	Enabled         *bool
+	SemanticEnabled *bool
+	Tags            []string
 }
 
 type Service struct {
@@ -74,7 +81,7 @@ func (s *Service) Search(ctx context.Context, opt core.SearchOptions) (SearchRes
 		}
 		kbHits, err := backend.Search(ctx, kb, effectiveOpt)
 		if err != nil {
-			if effectiveOpt.SearchMode == "hybrid" && backend.SupportsSemantic(kb) {
+			if (effectiveOpt.SearchMode == "semantic" || effectiveOpt.SearchMode == "hybrid") && backend.SupportsSemantic(kb) {
 				fallbackOpt := effectiveOpt
 				fallbackOpt.SearchMode = "lexical"
 				kbHits, fallbackErr := backend.Search(ctx, kb, fallbackOpt)
@@ -127,6 +134,51 @@ func (s *Service) ListKnowledgeBaseRecords() ([]registry.KnowledgeBaseRecord, er
 		return records, nil
 	}
 	return s.registry.ListWithSources()
+}
+
+func (s *Service) ListKnowledgeBaseSummaries(ctx context.Context) ([]KnowledgeBaseSummary, error) {
+	records, err := s.ListKnowledgeBaseRecords()
+	if err != nil {
+		return nil, err
+	}
+	summaries := make([]KnowledgeBaseSummary, 0, len(records))
+	for _, record := range records {
+		items, err := s.listItemsForKnowledgeBase(ctx, record.KnowledgeBase)
+		count := 0
+		if err == nil {
+			count = len(items)
+		}
+		summaries = append(summaries, KnowledgeBaseSummary{Record: record, ItemCount: count})
+	}
+	return summaries, nil
+}
+
+func (s *Service) ListKnowledgeItems(ctx context.Context, kbID string) ([]core.KnowledgeItem, error) {
+	kbID = strings.TrimSpace(kbID)
+	if kbID == "" {
+		return nil, &core.Error{Kind: core.ErrorKindConfig, Message: "knowledge base id is required"}
+	}
+	kb, backend, err := s.backendForKnowledgeBase(kbID)
+	if err != nil {
+		return nil, err
+	}
+	return backend.ListItems(ctx, kb)
+}
+
+func (s *Service) DeleteKnowledgeItem(ctx context.Context, kbID string, itemID string) error {
+	kbID = strings.TrimSpace(kbID)
+	itemID = strings.TrimSpace(itemID)
+	if kbID == "" {
+		return &core.Error{Kind: core.ErrorKindConfig, Message: "knowledge base id is required"}
+	}
+	if itemID == "" {
+		return &core.Error{Kind: core.ErrorKindConfig, Message: "knowledge item id is required"}
+	}
+	kb, backend, err := s.backendForKnowledgeBase(kbID)
+	if err != nil {
+		return err
+	}
+	return backend.DeleteItem(ctx, kb, itemID)
 }
 
 func (s *Service) CreateKnowledgeBase(ctx context.Context, input CreateKnowledgeBaseInput) (registry.KnowledgeBaseRecord, error) {
@@ -200,10 +252,48 @@ func (s *Service) Reload() error {
 	return nil
 }
 
+func (s *Service) Close() error {
+	_, backends := s.snapshot()
+	var firstErr error
+	for _, backend := range backends {
+		closer, ok := backend.(interface{ Close() error })
+		if !ok {
+			continue
+		}
+		if err := closer.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 func (s *Service) snapshot() ([]core.KnowledgeBase, map[string]core.StoreBackend) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return append([]core.KnowledgeBase(nil), s.knowledgeBases...), copyBackends(s.backends)
+}
+
+func (s *Service) listItemsForKnowledgeBase(ctx context.Context, kb core.KnowledgeBase) ([]core.KnowledgeItem, error) {
+	_, backend, err := s.backendForKnowledgeBase(kb.ID)
+	if err != nil {
+		return nil, err
+	}
+	return backend.ListItems(ctx, kb)
+}
+
+func (s *Service) backendForKnowledgeBase(kbID string) (core.KnowledgeBase, core.StoreBackend, error) {
+	kbs, backends := s.snapshot()
+	for _, kb := range kbs {
+		if kb.ID != kbID {
+			continue
+		}
+		backend, ok := backends[kb.StoreType]
+		if !ok {
+			return core.KnowledgeBase{}, nil, &core.Error{Kind: core.ErrorKindConfig, Message: "backend not registered for store type " + kb.StoreType}
+		}
+		return kb, backend, nil
+	}
+	return core.KnowledgeBase{}, nil, &core.Error{Kind: core.ErrorKindConfig, Message: "knowledge base not found"}
 }
 
 func copyBackends(backends map[string]core.StoreBackend) map[string]core.StoreBackend {
@@ -259,6 +349,10 @@ func normalizeCreateInput(input CreateKnowledgeBaseInput) (registry.RuntimeKnowl
 	}
 	if err := config.ApplyKnowledgeBaseDefaults(&kb); err != nil {
 		return registry.RuntimeKnowledgeBase{}, err
+	}
+	if input.StoreType == "sqlite" && input.SemanticEnabled != nil {
+		semantic, _ := kb.Indexing["semantic"].(map[string]any)
+		semantic["enabled"] = *input.SemanticEnabled
 	}
 	return registry.RuntimeKnowledgeBase{
 		ID:                kb.ID,

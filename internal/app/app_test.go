@@ -33,7 +33,25 @@ func TestBuildServiceUsesDefaultSQLiteKnowledgeBase(t *testing.T) {
 		t.Fatalf("expected default sqlite kb, got %#v", kbs[0])
 	}
 
-	_, ingest, _, err := svc.Add(context.Background(), core.AddInput{KBID: config.DefaultKBID, Title: "Default DB", Content: "SQLite default storage"})
+	if err := svc.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	dbPath := filepath.Join(home, ".knowledger", "lexical.db")
+	lexicalSvc, err := app.BuildServiceFromConfig(config.Config{KnowledgeBases: []config.KnowledgeBaseConfig{{
+		ID:          config.DefaultKBID,
+		Name:        config.DefaultKBName,
+		StoreType:   "sqlite",
+		StoreConfig: map[string]any{"path": dbPath},
+		Enabled:     true,
+		Indexing:    map[string]any{"semantic": map[string]any{"enabled": false}},
+	}}})
+	if err != nil {
+		t.Fatalf("BuildServiceFromConfig returned error: %v", err)
+	}
+	defer func() { _ = lexicalSvc.Close() }()
+
+	_, ingest, _, err := lexicalSvc.Add(context.Background(), core.AddInput{KBID: config.DefaultKBID, Title: "Default DB", Content: "SQLite default storage"})
 	if err != nil {
 		t.Fatalf("Add returned error: %v", err)
 	}
@@ -41,7 +59,7 @@ func TestBuildServiceUsesDefaultSQLiteKnowledgeBase(t *testing.T) {
 		t.Fatalf("expected successful ingest")
 	}
 
-	result, err := svc.Search(context.Background(), core.SearchOptions{Query: "SQLite", Limit: 10})
+	result, err := lexicalSvc.Search(context.Background(), core.SearchOptions{Query: "SQLite", SearchMode: "lexical", Limit: 10})
 	if err != nil {
 		t.Fatalf("Search returned error: %v", err)
 	}
@@ -49,8 +67,8 @@ func TestBuildServiceUsesDefaultSQLiteKnowledgeBase(t *testing.T) {
 		t.Fatalf("expected 1 search hit, got %d", len(result.Hits))
 	}
 
-	if _, err := os.Stat(filepath.Join(home, ".knowledger", "db")); err != nil {
-		t.Fatalf("expected default sqlite db to exist: %v", err)
+	if _, err := os.Stat(dbPath); err != nil {
+		t.Fatalf("expected sqlite db to exist: %v", err)
 	}
 }
 

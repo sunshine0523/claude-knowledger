@@ -28,19 +28,27 @@ func (fakeBackend) Search(context.Context, core.KnowledgeBase, core.SearchOption
 	return nil, nil
 }
 
-func (fakeBackend) ListItems(context.Context, core.KnowledgeBase) ([]core.KnowledgeItem, error) {
-	return nil, nil
+func (fakeBackend) ListItems(_ context.Context, kb core.KnowledgeBase) ([]core.KnowledgeItem, error) {
+	return []core.KnowledgeItem{{ID: "1", KBID: kb.ID, Type: "note", Title: "Stored knowledge", Content: "Stored content"}}, nil
+}
+
+func (fakeBackend) DeleteItem(context.Context, core.KnowledgeBase, string) error {
+	return nil
 }
 
 func (fakeBackend) SupportsSemantic(core.KnowledgeBase) bool { return false }
 
 type fakeWebService struct {
 	records      []registry.KnowledgeBaseRecord
+	items        []core.KnowledgeItem
 	listErr      error
 	searchResult service.SearchResult
 	searchErr    error
 	searchCalled bool
 	lastSearch   core.SearchOptions
+	lastCreate   service.CreateKnowledgeBaseInput
+	deletedKB    string
+	deletedItem  string
 }
 
 func (f *fakeWebService) ListKnowledgeBaseRecords() ([]registry.KnowledgeBaseRecord, error) {
@@ -50,8 +58,47 @@ func (f *fakeWebService) ListKnowledgeBaseRecords() ([]registry.KnowledgeBaseRec
 	return f.records, nil
 }
 
-func (f *fakeWebService) CreateKnowledgeBase(context.Context, service.CreateKnowledgeBaseInput) (registry.KnowledgeBaseRecord, error) {
-	return registry.KnowledgeBaseRecord{}, nil
+func (f *fakeWebService) ListKnowledgeBaseSummaries(context.Context) ([]service.KnowledgeBaseSummary, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	summaries := make([]service.KnowledgeBaseSummary, 0, len(f.records))
+	for _, record := range f.records {
+		count := 0
+		for _, item := range f.items {
+			if item.KBID == record.KnowledgeBase.ID {
+				count++
+			}
+		}
+		summaries = append(summaries, service.KnowledgeBaseSummary{Record: record, ItemCount: count})
+	}
+	return summaries, nil
+}
+
+func (f *fakeWebService) ListKnowledgeItems(_ context.Context, kbID string) ([]core.KnowledgeItem, error) {
+	for _, record := range f.records {
+		if record.KnowledgeBase.ID == kbID {
+			items := make([]core.KnowledgeItem, 0, len(f.items))
+			for _, item := range f.items {
+				if item.KBID == kbID {
+					items = append(items, item)
+				}
+			}
+			return items, nil
+		}
+	}
+	return nil, &core.Error{Kind: core.ErrorKindConfig, Message: "knowledge base not found"}
+}
+
+func (f *fakeWebService) DeleteKnowledgeItem(_ context.Context, kbID string, itemID string) error {
+	f.deletedKB = kbID
+	f.deletedItem = itemID
+	return nil
+}
+
+func (f *fakeWebService) CreateKnowledgeBase(_ context.Context, input service.CreateKnowledgeBaseInput) (registry.KnowledgeBaseRecord, error) {
+	f.lastCreate = input
+	return registry.KnowledgeBaseRecord{KnowledgeBase: core.KnowledgeBase{ID: input.ID, Name: input.Name, StoreType: input.StoreType, StoreConfig: map[string]any{"path": input.Path}, Enabled: true}, Source: registry.SourceRuntime, Deletable: true}, nil
 }
 
 func (f *fakeWebService) DeleteKnowledgeBase(context.Context, string) error {
@@ -97,6 +144,21 @@ func TestSearchLabRespondsOK(t *testing.T) {
 	}
 }
 
+func TestKnowledgePageRespondsOK(t *testing.T) {
+	srv := webadapter.NewServer(nil)
+	res := serve(t, srv, http.MethodGet, "/knowledge", nil)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", res.Code)
+	}
+	body := res.Body.String()
+	for _, expected := range []string{"knowledge-root", "knowledge-kb-select", "knowledge-items-body", "knowledge-content", "/static/app.js"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("expected knowledge page to contain %q, got %s", expected, body)
+		}
+	}
+}
+
 func TestStaticAssetsRespondOK(t *testing.T) {
 	srv := webadapter.NewServer(nil)
 
@@ -137,6 +199,14 @@ func TestWebPagesAndAssetsDoNotDependOnWorkingDirectory(t *testing.T) {
 		t.Fatalf("expected search-form after cwd change, got %s", searchLab.Body.String())
 	}
 
+	knowledge := serve(t, srv, http.MethodGet, "/knowledge", nil)
+	if knowledge.Code != http.StatusOK {
+		t.Fatalf("expected knowledge 200, got %d body=%s", knowledge.Code, knowledge.Body.String())
+	}
+	if !strings.Contains(knowledge.Body.String(), "knowledge-root") {
+		t.Fatalf("expected knowledge-root after cwd change, got %s", knowledge.Body.String())
+	}
+
 	js := serve(t, srv, http.MethodGet, "/static/app.js", nil)
 	if js.Code != http.StatusOK {
 		t.Fatalf("expected app.js 200 after cwd change, got %d body=%s", js.Code, js.Body.String())
@@ -164,8 +234,8 @@ func TestAPIListKBsReturnsKnowledgeBases(t *testing.T) {
 		t.Fatalf("expected success payload, got %#v", payload)
 	}
 	body := res.Body.String()
-	if !strings.Contains(body, "default") || !strings.Contains(body, "static") {
-		t.Fatalf("expected default static KB in response, got %s", body)
+	if !strings.Contains(body, "default") || !strings.Contains(body, "static") || !strings.Contains(body, "item_count") {
+		t.Fatalf("expected default static KB with item_count in response, got %s", body)
 	}
 }
 
@@ -436,9 +506,63 @@ func TestAPIDashboardReturnsKnowledgeBaseSummary(t *testing.T) {
 	if payload.Data.Readiness.SearchableKBs != 2 || payload.Data.Readiness.LexicalConfiguredKBs != 1 || payload.Data.Readiness.SemanticConfiguredKBs != 1 {
 		t.Fatalf("unexpected readiness counts: %#v", payload.Data.Readiness)
 	}
-	if payload.Data.Readiness.SemanticQueryImplemented {
-		t.Fatalf("expected semantic query implementation to be false, got %#v", payload.Data.Readiness)
+	if !payload.Data.Readiness.SemanticQueryImplemented {
+		t.Fatalf("expected semantic query implementation to be true, got %#v", payload.Data.Readiness)
 	}
+	if len(payload.Data.Readiness.Notes) != 1 || !strings.Contains(payload.Data.Readiness.Notes[0], "query failures fall back to lexical") {
+		t.Fatalf("expected embedded Chroma readiness note, got %#v", payload.Data.Readiness.Notes)
+	}
+}
+
+func TestAPIKnowledgeItemsListAndDelete(t *testing.T) {
+	fake := &fakeWebService{
+		records: []registry.KnowledgeBaseRecord{{
+			KnowledgeBase: core.KnowledgeBase{ID: "docs", Name: "Docs", StoreType: "text", StoreConfig: map[string]any{"path": "/tmp/docs"}, Enabled: true},
+			Source:        registry.SourceRuntime,
+			Deletable:     true,
+		}},
+		items: []core.KnowledgeItem{{ID: "item-1", KBID: "docs", Type: "document", Title: "Doc", Content: "Doc body", Tags: []string{"team"}}},
+	}
+	srv := webadapter.NewServer(fake)
+
+	listRes := serve(t, srv, http.MethodGet, "/api/kbs/docs/items", nil)
+	if listRes.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", listRes.Code, listRes.Body.String())
+	}
+	var payload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			ItemCount int `json:"item_count"`
+			Items     []struct {
+				ID      string   `json:"id"`
+				KBID    string   `json:"kb_id"`
+				Title   string   `json:"title"`
+				Content string   `json:"content"`
+				Tags    []string `json:"tags"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	decodeResponse(t, listRes, &payload)
+	if !payload.Success || payload.Data.ItemCount != 1 || len(payload.Data.Items) != 1 || payload.Data.Items[0].Content != "Doc body" {
+		t.Fatalf("unexpected item list payload: %#v", payload)
+	}
+
+	deleteRes := serve(t, srv, http.MethodDelete, "/api/kbs/docs/items/item-1", nil)
+	if deleteRes.Code != http.StatusOK {
+		t.Fatalf("expected 200 delete, got %d body=%s", deleteRes.Code, deleteRes.Body.String())
+	}
+	if fake.deletedKB != "docs" || fake.deletedItem != "item-1" {
+		t.Fatalf("expected delete docs/item-1, got %q/%q", fake.deletedKB, fake.deletedItem)
+	}
+}
+
+func TestAPIKnowledgeItemsMissingKBReturnsNotFound(t *testing.T) {
+	srv := webadapter.NewServer(&fakeWebService{})
+	res := serve(t, srv, http.MethodGet, "/api/kbs/missing/items", nil)
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d body=%s", res.Code, res.Body.String())
+	}
+	assertAPIErrorCode(t, res, "kb_not_found")
 }
 
 func TestAPICreateAndDeleteRuntimeKB(t *testing.T) {
@@ -462,6 +586,18 @@ func TestAPICreateAndDeleteRuntimeKB(t *testing.T) {
 	listRes = serve(t, srv, http.MethodGet, "/api/kbs", nil)
 	if strings.Contains(listRes.Body.String(), "docs") {
 		t.Fatalf("expected docs to be deleted, got %s", listRes.Body.String())
+	}
+}
+
+func TestAPICreatePassesSemanticEnabled(t *testing.T) {
+	fake := &fakeWebService{}
+	srv := webadapter.NewServer(fake)
+	res := serve(t, srv, http.MethodPost, "/api/kbs", []byte(`{"id":"notes","store_type":"sqlite","path":"/tmp/notes.db","semantic_enabled":false}`))
+	if res.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d body=%s", res.Code, res.Body.String())
+	}
+	if fake.lastCreate.SemanticEnabled == nil || *fake.lastCreate.SemanticEnabled != false {
+		t.Fatalf("expected semantic_enabled=false to be passed through, got %#v", fake.lastCreate.SemanticEnabled)
 	}
 }
 
@@ -504,7 +640,7 @@ func TestKBPageRendersManagementUI(t *testing.T) {
 		t.Fatalf("expected 200, got %d", res.Code)
 	}
 	body := res.Body.String()
-	for _, expected := range []string{"Knowledge Bases", "kb-create-form", "default", "docs", "kb-delete"} {
+	for _, expected := range []string{"Knowledge Bases", "kb-create-form", "default", "docs", "kb-delete", "Knowledge Count", "language-select", "/knowledge", "semantic_enabled", "Enable embedded Chroma semantic search for SQLite"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("expected page to contain %q, got %s", expected, body)
 		}

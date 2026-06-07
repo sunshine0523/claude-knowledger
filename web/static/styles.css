@@ -1,15 +1,21 @@
 body { font-family: system-ui, sans-serif; margin: 0; color: #1f2937; background: #f9fafb; }
-nav { display: flex; gap: 1rem; padding: 1rem; background: #111827; }
+nav { align-items: center; background: #111827; display: flex; gap: 1rem; justify-content: space-between; padding: 1rem; }
+.nav-links { display: flex; flex-wrap: wrap; gap: 1rem; }
 nav a { color: white; text-decoration: none; }
+.language-switcher { align-items: center; color: white; display: flex; gap: 0.5rem; }
+.language-switcher select { background: #1f2937; border-color: #4b5563; color: white; }
 main { padding: 2rem; }
 .panel { background: white; border: 1px solid #e5e7eb; border-radius: 0.75rem; margin: 1.5rem 0; padding: 1rem; }
 .kb-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 1rem; align-items: end; }
 .kb-form label { display: grid; gap: 0.35rem; font-weight: 600; }
 .kb-form .checkbox { display: flex; gap: 0.5rem; align-items: center; }
+.toolbar { align-items: end; display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }
+.toolbar label { display: grid; gap: 0.35rem; font-weight: 600; }
 input, select, button { border: 1px solid #d1d5db; border-radius: 0.4rem; font: inherit; padding: 0.5rem; }
 button { background: #1f2937; color: white; cursor: pointer; }
 button:disabled { background: #e5e7eb; color: #6b7280; cursor: not-allowed; }
 button.danger { background: #b91c1c; }
+button.inline-action { margin-left: 0.5rem; }
 .kb-table { border-collapse: collapse; width: 100%; }
 .kb-table th, .kb-table td { border-bottom: 1px solid #e5e7eb; padding: 0.65rem; text-align: left; vertical-align: top; }
 .kb-table th { background: #f3f4f6; }
@@ -32,4 +38,8 @@ code { background: #f3f4f6; border-radius: 0.25rem; padding: 0.1rem 0.25rem; }
 .summary-list dt { font-weight: 700; }
 .summary-list dd { margin: 0; }
 .warning-list { margin: 0; padding-left: 1.25rem; }
+.knowledge-layout { display: grid; gap: 1rem; grid-template-columns: minmax(0, 2fr) minmax(18rem, 1fr); }
+.content-panel { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 0.75rem; padding: 1rem; }
+.content-panel pre { background: #111827; border-radius: 0.5rem; color: #f9fafb; max-height: 36rem; overflow: auto; padding: 1rem; white-space: pre-wrap; word-break: break-word; }
 .muted { color: #6b7280; }
+@media (max-width: 900px) { .knowledge-layout { grid-template-columns: 1fr; } .search-form { grid-template-columns: 1fr; } nav { align-items: flex-start; flex-direction: column; } }

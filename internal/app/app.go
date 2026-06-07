@@ -36,6 +36,7 @@ func RunWithConfig(cfg config.Config, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = svc.Close() }()
 	return runService(svc, cfg.Server.Address, args)
 }
 
