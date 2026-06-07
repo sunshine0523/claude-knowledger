@@ -17,6 +17,9 @@ const (
 	DefaultKBID                = "default"
 	DefaultKBName              = "Default"
 	DefaultChromaProvider      = "chroma"
+	DefaultChromaMode          = "persistent"
+	DefaultChromaHTTPMode      = "http"
+	DefaultChromaStoragePath   = "~/.knowledger/chroma"
 	DefaultChromaBaseURL       = "http://127.0.0.1:8000"
 	DefaultChromaSyncMode      = "async"
 )
@@ -131,7 +134,9 @@ func ApplyKnowledgeBaseDefaults(kb *KnowledgeBaseConfig) error {
 		}
 		kb.StoreConfig["path"] = expanded
 	}
-	applySQLiteIndexingDefaults(kb)
+	if err := applySQLiteIndexingDefaults(kb); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -147,11 +152,13 @@ func defaultKnowledgeBase() (KnowledgeBaseConfig, error) {
 		Enabled:     true,
 		StoreConfig: map[string]any{"path": path},
 	}
-	applySQLiteIndexingDefaults(&kb)
+	if err := applySQLiteIndexingDefaults(&kb); err != nil {
+		return KnowledgeBaseConfig{}, err
+	}
 	return kb, nil
 }
 
-func applySQLiteIndexingDefaults(kb *KnowledgeBaseConfig) {
+func applySQLiteIndexingDefaults(kb *KnowledgeBaseConfig) error {
 	if kb.Indexing == nil {
 		kb.Indexing = map[string]any{}
 	}
@@ -161,13 +168,51 @@ func applySQLiteIndexingDefaults(kb *KnowledgeBaseConfig) {
 	semantic := ensureMap(kb.Indexing, "semantic")
 	setDefault(semantic, "enabled", true)
 	setDefault(semantic, "provider", DefaultChromaProvider)
-	setDefault(semantic, "base_url", DefaultChromaBaseURL)
 	collection := kb.ID
 	if collection == "" {
 		collection = DefaultKBID
 	}
 	setDefault(semantic, "collection", collection)
 	setDefault(semantic, "sync_mode", DefaultChromaSyncMode)
+	setDefault(semantic, "auto_download", true)
+
+	mode, _ := semantic["mode"].(string)
+	if mode == "" {
+		if _, ok := semantic["base_url"]; ok {
+			mode = DefaultChromaHTTPMode
+		} else {
+			mode = DefaultChromaMode
+		}
+		semantic["mode"] = mode
+	}
+
+	if mode == DefaultChromaHTTPMode {
+		setDefault(semantic, "base_url", DefaultChromaBaseURL)
+		return nil
+	}
+	if mode != DefaultChromaMode {
+		return nil
+	}
+
+	path, ok := semantic["path"]
+	if !ok {
+		basePath, err := expandHomePath(DefaultChromaStoragePath)
+		if err != nil {
+			return err
+		}
+		semantic["path"] = filepath.Join(basePath, collection)
+		return nil
+	}
+	pathString, ok := path.(string)
+	if !ok || pathString == "" {
+		return fmt.Errorf("knowledge base %q chroma semantic path must be a string", kb.ID)
+	}
+	expanded, err := expandHomePath(pathString)
+	if err != nil {
+		return err
+	}
+	semantic["path"] = expanded
+	return nil
 }
 
 func ensureMap(parent map[string]any, key string) map[string]any {

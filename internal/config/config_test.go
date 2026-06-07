@@ -146,6 +146,55 @@ func TestLoadSQLiteKnowledgeBaseExpandsHomePath(t *testing.T) {
 	}
 }
 
+func TestLoadSQLiteKnowledgeBasePreservesLegacyHTTPChromaConfig(t *testing.T) {
+	cfg := loadConfig(t, `knowledge_bases:
+  - id: notes
+    name: Notes
+    store_type: sqlite
+    enabled: true
+    indexing:
+      semantic:
+        enabled: true
+        provider: chroma
+        base_url: http://127.0.0.1:8000
+        collection: notes
+`)
+
+	semantic := cfg.KnowledgeBases[0].Indexing["semantic"].(map[string]any)
+	if semantic["mode"] != "http" {
+		t.Fatalf("expected legacy base_url config to default to http mode, got %#v", semantic["mode"])
+	}
+	if semantic["base_url"] != "http://127.0.0.1:8000" {
+		t.Fatalf("expected base_url to be preserved, got %#v", semantic["base_url"])
+	}
+	if _, ok := semantic["path"]; ok {
+		t.Fatalf("expected legacy http config not to receive persistent path, got %#v", semantic)
+	}
+}
+
+func TestLoadSQLiteKnowledgeBaseExpandsSemanticPersistentPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cfg := loadConfig(t, `knowledge_bases:
+  - id: notes
+    name: Notes
+    store_type: sqlite
+    enabled: true
+    indexing:
+      semantic:
+        enabled: true
+        provider: chroma
+        mode: persistent
+        path: ~/custom-chroma
+`)
+
+	semantic := cfg.KnowledgeBases[0].Indexing["semantic"].(map[string]any)
+	if semantic["path"] != filepath.Join(home, "custom-chroma") {
+		t.Fatalf("expected expanded semantic path, got %#v", semantic["path"])
+	}
+}
+
 func TestLoadSQLiteKnowledgeBasePreservesRelativePath(t *testing.T) {
 	cfg := loadConfig(t, `knowledge_bases:
   - id: notes
@@ -232,11 +281,13 @@ func assertSemanticDefaults(t *testing.T, indexing map[string]any, collection st
 		t.Fatalf("expected semantic indexing map, got %#v", indexing["semantic"])
 	}
 	expected := map[string]any{
-		"enabled":    true,
-		"provider":   config.DefaultChromaProvider,
-		"base_url":   config.DefaultChromaBaseURL,
-		"collection": collection,
-		"sync_mode":  config.DefaultChromaSyncMode,
+		"enabled":       true,
+		"provider":      config.DefaultChromaProvider,
+		"mode":          config.DefaultChromaMode,
+		"path":          filepath.Join(os.Getenv("HOME"), ".knowledger", "chroma", collection),
+		"collection":    collection,
+		"auto_download": true,
+		"sync_mode":     config.DefaultChromaSyncMode,
 	}
 	for key, value := range expected {
 		if semantic[key] != value {
