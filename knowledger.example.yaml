@@ -15,8 +15,10 @@ knowledge_bases:
       semantic:
         enabled: true
         provider: chroma
-        base_url: http://127.0.0.1:8000
+        mode: persistent
+        path: ~/.knowledger/chroma/default
         collection: default
+        auto_download: true
         sync_mode: async
 
   # Optional explicit text knowledge base example. Text KBs require a path.

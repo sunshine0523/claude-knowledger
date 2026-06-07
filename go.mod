@@ -1,6 +1,6 @@
 module github.com/kindbrave/knowledger
 
-go 1.23
+go 1.24.11
 
 require (
 	github.com/mark3labs/mcp-go v0.39.1
@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	github.com/amikos-tech/chroma-go v0.4.1 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
