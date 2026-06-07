@@ -19,11 +19,9 @@ Knowledger 是一个面向 agent 的知识聚合工具，提供统一 Core、CLI
 - `store_type: sqlite`
 - `store_config.path: ~/.knowledger/db`
 - lexical indexing enabled
-- semantic indexing metadata configured for Chroma at `http://127.0.0.1:8000`, collection `default`
+- semantic indexing uses embedded persistent Chroma at `~/.knowledger/chroma/default`, collection `default`
 
-在配置文件中省略 `knowledge_bases` 或设置 `knowledge_bases: []` 也会生成同样的默认 SQLite + Chroma 配置。对于显式的 SQLite knowledge base，如果省略 `store_config.path`，同样会使用 `~/.knowledger/db`。
-
-注意：当前默认会写入 Chroma semantic indexing 配置，但完整 Chroma upsert/query 执行路径仍属于后续功能；现有 SQLite lexical/FTS 搜索不依赖 Chroma 服务运行。
+在配置文件中省略 `knowledge_bases` 或设置 `knowledge_bases: []` 也会生成同样的默认 SQLite + embedded persistent Chroma 配置。对于显式的 SQLite knowledge base，如果省略 `store_config.path`，同样会使用 `~/.knowledger/db`。默认模式不需要运行外部 Chroma server。
 
 ## Web Dashboard
 
