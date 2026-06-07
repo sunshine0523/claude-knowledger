@@ -51,7 +51,7 @@ go run ./cmd/knowledger --config knowledger.example.yaml serve
 
 ## 开发
 
-项目需要 Go 1.24+。Ubuntu LTS apt 源中的 Go 版本可能滞后；如果 `go version` 低于 1.24，优先使用官方 Go tarball、asdf、mise 或 snap 安装较新的 Go。
+项目需要 Go 1.24.11+。Ubuntu LTS apt 源中的 Go 版本可能滞后；如果 `go version` 低于 1.24.11，优先使用官方 Go tarball、asdf、mise 或 snap 安装较新的 Go。
 
 ```bash
 go test ./...
