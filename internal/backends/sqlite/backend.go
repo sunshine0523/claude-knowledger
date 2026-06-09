@@ -35,6 +35,10 @@ type Backend struct {
 	semanticClients map[string]chroma.Client
 }
 
+type MultiBackend struct {
+	backends map[string]*Backend
+}
+
 func WithSemanticClientFactory(factory chroma.Factory) Option {
 	return func(b *Backend) {
 		if factory != nil {
@@ -74,6 +78,107 @@ func New(path string, opts ...Option) (*Backend, error) {
 		}
 	}
 	return backend, nil
+}
+
+func NewMulti(kbs []core.KnowledgeBase, opts ...Option) (*MultiBackend, error) {
+	multi := &MultiBackend{backends: map[string]*Backend{}}
+	for _, kb := range kbs {
+		if kb.StoreType != "sqlite" {
+			continue
+		}
+		path, err := databasePath(kb)
+		if err != nil {
+			return nil, errors.Join(err, multi.Close())
+		}
+		if multi.backends[path] != nil {
+			continue
+		}
+		backend, err := New(path, opts...)
+		if err != nil {
+			return nil, errors.Join(err, multi.Close())
+		}
+		multi.backends[path] = backend
+	}
+	return multi, nil
+}
+
+func (m *MultiBackend) Add(ctx context.Context, kb core.KnowledgeBase, input core.AddInput) (core.KnowledgeItem, core.IngestionResult, core.IndexStatus, error) {
+	backend, err := m.backend(kb)
+	if err != nil {
+		return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, err
+	}
+	return backend.Add(ctx, kb, input)
+}
+
+func (m *MultiBackend) Search(ctx context.Context, kb core.KnowledgeBase, opt core.SearchOptions) ([]core.SearchHit, error) {
+	backend, err := m.backend(kb)
+	if err != nil {
+		return nil, err
+	}
+	return backend.Search(ctx, kb, opt)
+}
+
+func (m *MultiBackend) GetItem(ctx context.Context, kb core.KnowledgeBase, itemID string) (core.KnowledgeItem, error) {
+	backend, err := m.backend(kb)
+	if err != nil {
+		return core.KnowledgeItem{}, err
+	}
+	return backend.GetItem(ctx, kb, itemID)
+}
+
+func (m *MultiBackend) ListItems(ctx context.Context, kb core.KnowledgeBase) ([]core.KnowledgeItem, error) {
+	backend, err := m.backend(kb)
+	if err != nil {
+		return nil, err
+	}
+	return backend.ListItems(ctx, kb)
+}
+
+func (m *MultiBackend) DeleteItem(ctx context.Context, kb core.KnowledgeBase, itemID string) error {
+	backend, err := m.backend(kb)
+	if err != nil {
+		return err
+	}
+	return backend.DeleteItem(ctx, kb, itemID)
+}
+
+func (m *MultiBackend) SupportsSemantic(kb core.KnowledgeBase) bool {
+	backend, err := m.backend(kb)
+	if err != nil {
+		return false
+	}
+	return backend.SupportsSemantic(kb)
+}
+
+func (m *MultiBackend) Close() error {
+	if m == nil {
+		return nil
+	}
+	var err error
+	for _, backend := range m.backends {
+		err = errors.Join(err, backend.Close())
+	}
+	return err
+}
+
+func (m *MultiBackend) backend(kb core.KnowledgeBase) (*Backend, error) {
+	path, err := databasePath(kb)
+	if err != nil {
+		return nil, err
+	}
+	backend := m.backends[path]
+	if backend == nil {
+		return nil, &core.Error{Kind: core.ErrorKindConfig, Message: fmt.Sprintf("sqlite backend not registered for knowledge base %q path %q", kb.ID, path)}
+	}
+	return backend, nil
+}
+
+func databasePath(kb core.KnowledgeBase) (string, error) {
+	path, ok := kb.StoreConfig["path"].(string)
+	if !ok || path == "" {
+		return "", &core.Error{Kind: core.ErrorKindConfig, Message: fmt.Sprintf("knowledge base %q sqlite store_config.path is required", kb.ID)}
+	}
+	return path, nil
 }
 
 func prepareDatabasePath(path string) error {
@@ -310,6 +415,22 @@ func semanticSearchHits(kbID, matchMode string, hits []chroma.Hit) []core.Search
 	return out
 }
 
+func (b *Backend) GetItem(ctx context.Context, kb core.KnowledgeBase, itemID string) (core.KnowledgeItem, error) {
+	row := b.db.QueryRowContext(ctx, `
+		SELECT id, title, content, tags, metadata_json, created_at, updated_at
+		FROM knowledge_items
+		WHERE kb_id = ? AND id = ?
+	`, kb.ID, itemID)
+	item, err := scanItem(row, kb.ID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return core.KnowledgeItem{}, &core.Error{Kind: core.ErrorKindStore, Message: "knowledge item not found"}
+		}
+		return core.KnowledgeItem{}, err
+	}
+	return item, nil
+}
+
 func (b *Backend) ListItems(ctx context.Context, kb core.KnowledgeBase) ([]core.KnowledgeItem, error) {
 	rows, err := b.db.QueryContext(ctx, `
 		SELECT id, title, content, tags, metadata_json, created_at, updated_at
@@ -324,36 +445,48 @@ func (b *Backend) ListItems(ctx context.Context, kb core.KnowledgeBase) ([]core.
 
 	var items []core.KnowledgeItem
 	for rows.Next() {
-		var id int64
-		var title, content, tags, metadataJSON, createdAtRaw, updatedAtRaw string
-		if err := rows.Scan(&id, &title, &content, &tags, &metadataJSON, &createdAtRaw, &updatedAtRaw); err != nil {
-			return nil, err
-		}
-		metadata := map[string]any{}
-		if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
-			return nil, err
-		}
-		createdAt, err := time.Parse(time.RFC3339, createdAtRaw)
+		item, err := scanItem(rows, kb.ID)
 		if err != nil {
 			return nil, err
 		}
-		updatedAt, err := time.Parse(time.RFC3339, updatedAtRaw)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, core.KnowledgeItem{
-			ID:        fmt.Sprintf("%d", id),
-			KBID:      kb.ID,
-			Type:      "note",
-			Title:     title,
-			Content:   content,
-			Metadata:  metadata,
-			Tags:      splitTags(tags),
-			CreatedAt: createdAt,
-			UpdatedAt: updatedAt,
-		})
+		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+type itemScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanItem(scanner itemScanner, kbID string) (core.KnowledgeItem, error) {
+	var id int64
+	var title, content, tags, metadataJSON, createdAtRaw, updatedAtRaw string
+	if err := scanner.Scan(&id, &title, &content, &tags, &metadataJSON, &createdAtRaw, &updatedAtRaw); err != nil {
+		return core.KnowledgeItem{}, err
+	}
+	metadata := map[string]any{}
+	if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
+		return core.KnowledgeItem{}, err
+	}
+	createdAt, err := time.Parse(time.RFC3339, createdAtRaw)
+	if err != nil {
+		return core.KnowledgeItem{}, err
+	}
+	updatedAt, err := time.Parse(time.RFC3339, updatedAtRaw)
+	if err != nil {
+		return core.KnowledgeItem{}, err
+	}
+	return core.KnowledgeItem{
+		ID:        fmt.Sprintf("%d", id),
+		KBID:      kbID,
+		Type:      "note",
+		Title:     title,
+		Content:   content,
+		Metadata:  metadata,
+		Tags:      splitTags(tags),
+		CreatedAt: createdAt,
+		UpdatedAt: updatedAt,
+	}, nil
 }
 
 func (b *Backend) DeleteItem(ctx context.Context, kb core.KnowledgeBase, itemID string) error {

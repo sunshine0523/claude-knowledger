@@ -28,6 +28,13 @@ func (fakeBackend) Search(context.Context, core.KnowledgeBase, core.SearchOption
 	return nil, nil
 }
 
+func (fakeBackend) GetItem(_ context.Context, kb core.KnowledgeBase, itemID string) (core.KnowledgeItem, error) {
+	if itemID != "1" {
+		return core.KnowledgeItem{}, &core.Error{Kind: core.ErrorKindStore, Message: "knowledge item not found"}
+	}
+	return core.KnowledgeItem{ID: "1", KBID: kb.ID, Type: "note", Title: "Stored knowledge", Content: "Stored content"}, nil
+}
+
 func (fakeBackend) ListItems(_ context.Context, kb core.KnowledgeBase) ([]core.KnowledgeItem, error) {
 	return []core.KnowledgeItem{{ID: "1", KBID: kb.ID, Type: "note", Title: "Stored knowledge", Content: "Stored content"}}, nil
 }

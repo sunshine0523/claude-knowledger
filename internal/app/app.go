@@ -1,8 +1,6 @@
 package app
 
 import (
-	"fmt"
-
 	"github.com/kindbrave/knowledger/internal/adapters/cli"
 	"github.com/kindbrave/knowledger/internal/backends/sqlite"
 	"github.com/kindbrave/knowledger/internal/backends/text"
@@ -68,12 +66,8 @@ func buildBackends(kbs []core.KnowledgeBase) (map[string]core.StoreBackend, erro
 	backends := map[string]core.StoreBackend{
 		"text": text.New(),
 	}
-	path, hasSQLite, err := sqlitePath(kbs)
-	if err != nil {
-		return nil, err
-	}
-	if hasSQLite {
-		sqliteBackend, err := sqlite.New(path)
+	if hasStoreType(kbs, "sqlite") {
+		sqliteBackend, err := sqlite.NewMulti(kbs)
 		if err != nil {
 			return nil, err
 		}
@@ -88,26 +82,11 @@ func runService(svc *service.Service, address string, args []string) error {
 	return cmd.Execute()
 }
 
-func sqlitePath(kbs []core.KnowledgeBase) (string, bool, error) {
-	var selected string
+func hasStoreType(kbs []core.KnowledgeBase, storeType string) bool {
 	for _, kb := range kbs {
-		if kb.StoreType != "sqlite" {
-			continue
-		}
-		path, ok := kb.StoreConfig["path"].(string)
-		if !ok || path == "" {
-			return "", false, fmt.Errorf("knowledge base %q sqlite store_config.path is required", kb.ID)
-		}
-		if selected == "" {
-			selected = path
-			continue
-		}
-		if path != selected {
-			return "", false, fmt.Errorf("multiple sqlite database paths are not supported: %q and %q", selected, path)
+		if kb.StoreType == storeType {
+			return true
 		}
 	}
-	if selected == "" {
-		return "", false, nil
-	}
-	return selected, true, nil
+	return false
 }

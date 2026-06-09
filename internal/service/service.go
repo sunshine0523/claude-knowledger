@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/kindbrave/knowledger/internal/config"
 	"github.com/kindbrave/knowledger/internal/core"
@@ -100,7 +101,7 @@ func (s *Service) Search(ctx context.Context, opt core.SearchOptions) (SearchRes
 	if opt.Limit > 0 && len(result.Hits) > opt.Limit {
 		result.Hits = result.Hits[:opt.Limit]
 	}
-	return result, nil
+	return s.withSearchSnippets(ctx, opt.Query, result, backends), nil
 }
 
 func (s *Service) Add(ctx context.Context, input core.AddInput) (core.KnowledgeItem, core.IngestionResult, core.IndexStatus, error) {
@@ -165,6 +166,22 @@ func (s *Service) ListKnowledgeItems(ctx context.Context, kbID string) ([]core.K
 	return backend.ListItems(ctx, kb)
 }
 
+func (s *Service) GetKnowledgeItem(ctx context.Context, kbID string, itemID string) (core.KnowledgeItem, error) {
+	kbID = strings.TrimSpace(kbID)
+	itemID = strings.TrimSpace(itemID)
+	if kbID == "" {
+		return core.KnowledgeItem{}, &core.Error{Kind: core.ErrorKindConfig, Message: "knowledge base id is required"}
+	}
+	if itemID == "" {
+		return core.KnowledgeItem{}, &core.Error{Kind: core.ErrorKindConfig, Message: "knowledge item id is required"}
+	}
+	kb, backend, err := s.backendForKnowledgeBase(kbID)
+	if err != nil {
+		return core.KnowledgeItem{}, err
+	}
+	return backend.GetItem(ctx, kb, itemID)
+}
+
 func (s *Service) DeleteKnowledgeItem(ctx context.Context, kbID string, itemID string) error {
 	kbID = strings.TrimSpace(kbID)
 	itemID = strings.TrimSpace(itemID)
@@ -201,7 +218,11 @@ func (s *Service) CreateKnowledgeBase(ctx context.Context, input CreateKnowledge
 		}
 	}
 	prospective := append(append([]core.KnowledgeBase(nil), existing...), runtimeToCore(runtimeKB))
-	if _, err := s.buildBackends(prospective); err != nil {
+	prospectiveBackends, err := s.buildBackends(prospective)
+	if err != nil {
+		return registry.KnowledgeBaseRecord{}, err
+	}
+	if err := closeBackends(prospectiveBackends); err != nil {
 		return registry.KnowledgeBaseRecord{}, err
 	}
 	if err := s.registry.Create(runtimeKB); err != nil {
@@ -254,6 +275,10 @@ func (s *Service) Reload() error {
 
 func (s *Service) Close() error {
 	_, backends := s.snapshot()
+	return closeBackends(backends)
+}
+
+func closeBackends(backends map[string]core.StoreBackend) error {
 	var firstErr error
 	for _, backend := range backends {
 		closer, ok := backend.(interface{ Close() error })
@@ -377,6 +402,106 @@ func runtimeToCore(item registry.RuntimeKnowledgeBase) core.KnowledgeBase {
 		Indexing:          item.Indexing,
 		Tags:              item.Tags,
 	}
+}
+
+const searchSnippetContextRunes = 120
+const searchFallbackSnippetRunes = 240
+
+func (s *Service) withSearchSnippets(ctx context.Context, query string, result SearchResult, backends map[string]core.StoreBackend) SearchResult {
+	kbs, _ := s.snapshot()
+	kbByID := make(map[string]core.KnowledgeBase, len(kbs))
+	for _, kb := range kbs {
+		kbByID[kb.ID] = kb
+	}
+	for i := range result.Hits {
+		hit := &result.Hits[i]
+		kb, ok := kbByID[hit.KBID]
+		if !ok {
+			setFallbackSnippet(hit)
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%s/%s: could not load full content for snippet", hit.KBID, hit.ItemID))
+			continue
+		}
+		backend := backends[kb.StoreType]
+		if backend == nil {
+			setFallbackSnippet(hit)
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%s/%s: could not load full content for snippet", hit.KBID, hit.ItemID))
+			continue
+		}
+		item, err := backend.GetItem(ctx, kb, hit.ItemID)
+		if err != nil {
+			setFallbackSnippet(hit)
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%s/%s: could not load full content for snippet: %v", hit.KBID, hit.ItemID, err))
+			continue
+		}
+		snippet := snippetAroundQuery(item.Content, query)
+		hit.Snippet = snippet
+		hit.ContentPreview = snippet
+	}
+	return result
+}
+
+func setFallbackSnippet(hit *core.SearchHit) {
+	text := hit.ContentPreview
+	if text == "" {
+		text = hit.Snippet
+	}
+	snippet := truncateRunes(text, searchFallbackSnippetRunes)
+	hit.Snippet = snippet
+	hit.ContentPreview = snippet
+}
+
+func snippetAroundQuery(content string, query string) string {
+	var firstTerm string
+	for _, term := range queryTerms(query) {
+		if term != "" {
+			firstTerm = term
+			break
+		}
+	}
+	contentRunes := []rune(content)
+	termRunes := []rune(firstTerm)
+	if len(termRunes) > 0 && len(termRunes) <= len(contentRunes) {
+		for start := 0; start <= len(contentRunes)-len(termRunes); start++ {
+			if strings.EqualFold(string(contentRunes[start:start+len(termRunes)]), firstTerm) {
+				return snippetAroundMatch(content, start, len(termRunes))
+			}
+		}
+	}
+	return truncateRunes(content, searchFallbackSnippetRunes)
+}
+
+func snippetAroundMatch(content string, matchStartRunes int, matchRunes int) string {
+	runes := []rune(content)
+	start := matchStartRunes - searchSnippetContextRunes
+	if start < 0 {
+		start = 0
+	}
+	end := matchStartRunes + matchRunes + searchSnippetContextRunes
+	if end > len(runes) {
+		end = len(runes)
+	}
+	snippet := string(runes[start:end])
+	if start > 0 {
+		snippet = "…" + snippet
+	}
+	if end < len(runes) {
+		snippet += "…"
+	}
+	return snippet
+}
+
+func truncateRunes(content string, limit int) string {
+	runes := []rune(content)
+	if len(runes) <= limit {
+		return content
+	}
+	return string(runes[:limit]) + "…"
+}
+
+func queryTerms(query string) []string {
+	return strings.FieldsFunc(query, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsPunct(r) || unicode.IsSymbol(r)
+	})
 }
 
 func searchOptionsForKnowledgeBase(opt core.SearchOptions, kb core.KnowledgeBase, backend core.StoreBackend) (core.SearchOptions, string) {

@@ -20,6 +20,7 @@ type AddInput struct {
 type StoreBackend interface {
 	Add(context.Context, KnowledgeBase, AddInput) (KnowledgeItem, IngestionResult, IndexStatus, error)
 	Search(context.Context, KnowledgeBase, SearchOptions) ([]SearchHit, error)
+	GetItem(context.Context, KnowledgeBase, string) (KnowledgeItem, error)
 	ListItems(context.Context, KnowledgeBase) ([]KnowledgeItem, error)
 	DeleteItem(context.Context, KnowledgeBase, string) error
 	SupportsSemantic(KnowledgeBase) bool

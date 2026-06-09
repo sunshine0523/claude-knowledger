@@ -7,7 +7,7 @@ import (
 	"github.com/kindbrave/knowledger/internal/adapters/cli"
 )
 
-func TestRootCommandShowsSearchSubcommand(t *testing.T) {
+func TestRootCommandShowsSearchAndGetSubcommands(t *testing.T) {
 	buf := new(bytes.Buffer)
 	cmd := cli.NewRootCommand(nil)
 	cmd.SetOut(buf)
@@ -18,8 +18,10 @@ func TestRootCommandShowsSearchSubcommand(t *testing.T) {
 		t.Fatalf("Execute returned error: %v", err)
 	}
 
-	if !bytes.Contains(buf.Bytes(), []byte("search")) {
-		t.Fatalf("expected help output to mention search subcommand")
+	for _, expected := range []string{"search", "get"} {
+		if !bytes.Contains(buf.Bytes(), []byte(expected)) {
+			t.Fatalf("expected help output to mention %s subcommand, got %s", expected, buf.String())
+		}
 	}
 }
 

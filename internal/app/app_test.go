@@ -104,14 +104,46 @@ func TestBuildServiceLoadsPersistedRuntimeKnowledgeBases(t *testing.T) {
 	}
 }
 
-func TestBuildServiceRejectsMultipleSQLitePaths(t *testing.T) {
+func TestBuildServiceAllowsMultipleSQLitePaths(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	onePath := filepath.Join(root, "one.db")
+	twoPath := filepath.Join(root, "two.db")
 	cfg := config.Config{KnowledgeBases: []config.KnowledgeBaseConfig{
-		{ID: "one", StoreType: "sqlite", Enabled: true, StoreConfig: map[string]any{"path": filepath.Join(t.TempDir(), "one.db")}},
-		{ID: "two", StoreType: "sqlite", Enabled: true, StoreConfig: map[string]any{"path": filepath.Join(t.TempDir(), "two.db")}},
+		{ID: "one", StoreType: "sqlite", Enabled: true, StoreConfig: map[string]any{"path": onePath}, Indexing: map[string]any{"semantic": map[string]any{"enabled": false}}},
+		{ID: "two", StoreType: "sqlite", Enabled: true, StoreConfig: map[string]any{"path": twoPath}, Indexing: map[string]any{"semantic": map[string]any{"enabled": false}}},
 	}}
 
-	if _, err := app.BuildServiceFromConfig(cfg); err == nil {
-		t.Fatalf("expected error for multiple sqlite paths")
+	svc, err := app.BuildServiceFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("BuildServiceFromConfig returned error: %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+
+	if _, _, _, err := svc.Add(context.Background(), core.AddInput{KBID: "one", Title: "First", Content: "only in first"}); err != nil {
+		t.Fatalf("Add one returned error: %v", err)
+	}
+	if _, _, _, err := svc.Add(context.Background(), core.AddInput{KBID: "two", Title: "Second", Content: "only in second"}); err != nil {
+		t.Fatalf("Add two returned error: %v", err)
+	}
+	oneItems, err := svc.ListKnowledgeItems(context.Background(), "one")
+	if err != nil {
+		t.Fatalf("ListKnowledgeItems one returned error: %v", err)
+	}
+	twoItems, err := svc.ListKnowledgeItems(context.Background(), "two")
+	if err != nil {
+		t.Fatalf("ListKnowledgeItems two returned error: %v", err)
+	}
+	if len(oneItems) != 1 || oneItems[0].Title != "First" {
+		t.Fatalf("unexpected one items: %#v", oneItems)
+	}
+	if len(twoItems) != 1 || twoItems[0].Title != "Second" {
+		t.Fatalf("unexpected two items: %#v", twoItems)
+	}
+	if _, err := os.Stat(onePath); err != nil {
+		t.Fatalf("expected first sqlite db to exist: %v", err)
+	}
+	if _, err := os.Stat(twoPath); err != nil {
+		t.Fatalf("expected second sqlite db to exist: %v", err)
 	}
 }

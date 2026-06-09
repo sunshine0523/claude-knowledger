@@ -3,6 +3,7 @@ package text
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -54,14 +55,16 @@ func (b *Backend) Search(_ context.Context, kb core.KnowledgeBase, opt core.Sear
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() || !isSupportedTextFile(path) {
+		if entry.IsDir() {
 			return nil
 		}
-		data, err := os.ReadFile(path)
+		content, _, skip, err := readTextItemFile(dir, path)
 		if err != nil {
 			return err
 		}
-		content := string(data)
+		if skip {
+			return nil
+		}
 		if strings.Contains(strings.ToLower(content), needle) {
 			hits = append(hits, core.SearchHit{
 				ItemID:         itemIDForPath(dir, path),
@@ -103,23 +106,56 @@ func (b *Backend) ListItems(_ context.Context, kb core.KnowledgeBase) ([]core.Kn
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() || !isSupportedTextFile(path) {
+		if entry.IsDir() {
 			return nil
 		}
-		data, err := os.ReadFile(path)
+		content, info, skip, err := readTextItemFile(dir, path)
 		if err != nil {
 			return err
 		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
+		if skip {
+			return nil
 		}
-		items = append(items, core.KnowledgeItem{ID: itemIDForPath(dir, path), KBID: kb.ID, Type: "document", Title: itemTitleForPath(dir, path), Content: string(data), CreatedAt: info.ModTime(), UpdatedAt: info.ModTime()})
+		items = append(items, core.KnowledgeItem{ID: itemIDForPath(dir, path), KBID: kb.ID, Type: "document", Title: itemTitleForPath(dir, path), Content: content, CreatedAt: info.ModTime(), UpdatedAt: info.ModTime()})
 		return nil
 	}); err != nil {
 		return nil, err
 	}
 	return items, nil
+}
+
+func (b *Backend) GetItem(_ context.Context, kb core.KnowledgeBase, itemID string) (core.KnowledgeItem, error) {
+	dir, ok := kb.StoreConfig["path"].(string)
+	if !ok || dir == "" {
+		return core.KnowledgeItem{}, &core.Error{Kind: core.ErrorKindConfig, Message: "text backend requires store_config.path"}
+	}
+	originalPath, err := safeItemPath(dir, itemID)
+	if err != nil {
+		return core.KnowledgeItem{}, err
+	}
+	content, originalInfo, skip, err := readTextItemFile(dir, originalPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return core.KnowledgeItem{}, &core.Error{Kind: core.ErrorKindStore, Message: "knowledge item not found"}
+		}
+		return core.KnowledgeItem{}, err
+	}
+	if skip {
+		return core.KnowledgeItem{}, &core.Error{Kind: core.ErrorKindStore, Message: "knowledge item not found"}
+	}
+	originalBase, err := filepath.Abs(dir)
+	if err != nil {
+		return core.KnowledgeItem{}, err
+	}
+	return core.KnowledgeItem{
+		ID:        itemIDForPath(originalBase, originalPath),
+		KBID:      kb.ID,
+		Type:      "document",
+		Title:     itemTitleForPath(originalBase, originalPath),
+		Content:   content,
+		CreatedAt: originalInfo.ModTime(),
+		UpdatedAt: originalInfo.ModTime(),
+	}, nil
 }
 
 func (b *Backend) DeleteItem(_ context.Context, kb core.KnowledgeBase, itemID string) error {
@@ -143,6 +179,46 @@ func (b *Backend) DeleteItem(_ context.Context, kb core.KnowledgeBase, itemID st
 func isSupportedTextFile(path string) bool {
 	_, ok := supportedTextExtensions[strings.ToLower(filepath.Ext(path))]
 	return ok
+}
+
+func readTextItemFile(dir string, path string) (string, os.FileInfo, bool, error) {
+	if !isSupportedTextFile(path) {
+		return "", nil, true, nil
+	}
+	originalInfo, err := os.Lstat(path)
+	if err != nil {
+		return "", nil, false, err
+	}
+	if originalInfo.IsDir() {
+		return "", nil, true, nil
+	}
+	_, resolvedPath, err := resolvedContainedPath(dir, path)
+	if err != nil {
+		if originalInfo.Mode()&os.ModeSymlink != 0 {
+			return "", nil, true, nil
+		}
+		return "", nil, false, err
+	}
+	if !isSupportedTextFile(resolvedPath) {
+		return "", nil, true, nil
+	}
+	resolvedInfo, err := os.Stat(resolvedPath)
+	if err != nil {
+		return "", nil, false, err
+	}
+	if !resolvedInfo.Mode().IsRegular() {
+		return "", nil, true, nil
+	}
+	file, err := os.Open(resolvedPath)
+	if err != nil {
+		return "", nil, false, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return "", nil, false, err
+	}
+	return string(data), originalInfo, false, nil
 }
 
 func itemIDForPath(dir string, path string) string {
@@ -195,9 +271,8 @@ func safeItemPath(dir string, itemID string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		relToBase, err := filepath.Rel(base, absPath)
-		if err != nil || relToBase == ".." || strings.HasPrefix(relToBase, ".."+string(filepath.Separator)) || filepath.IsAbs(relToBase) {
-			return "", &core.Error{Kind: core.ErrorKindConfig, Message: "invalid knowledge item id"}
+		if err := ensureContained(base, absPath); err != nil {
+			return "", err
 		}
 		if fallback == "" {
 			fallback = absPath
@@ -209,6 +284,43 @@ func safeItemPath(dir string, itemID string) (string, error) {
 		}
 	}
 	return fallback, nil
+}
+
+func resolvedContainedPath(dir string, path string) (string, string, error) {
+	base, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", "", &core.Error{Kind: core.ErrorKindStore, Message: "knowledge item not found"}
+		}
+		return "", "", err
+	}
+	resolvedPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", "", &core.Error{Kind: core.ErrorKindStore, Message: "knowledge item not found"}
+		}
+		return "", "", err
+	}
+	base, err = filepath.Abs(base)
+	if err != nil {
+		return "", "", err
+	}
+	resolvedPath, err = filepath.Abs(resolvedPath)
+	if err != nil {
+		return "", "", err
+	}
+	if err := ensureContained(base, resolvedPath); err != nil {
+		return "", "", err
+	}
+	return base, resolvedPath, nil
+}
+
+func ensureContained(base string, path string) error {
+	relToBase, err := filepath.Rel(base, path)
+	if err != nil || relToBase == ".." || strings.HasPrefix(relToBase, ".."+string(filepath.Separator)) || filepath.IsAbs(relToBase) {
+		return &core.Error{Kind: core.ErrorKindConfig, Message: "invalid knowledge item id"}
+	}
+	return nil
 }
 
 func (b *Backend) SupportsSemantic(core.KnowledgeBase) bool { return false }

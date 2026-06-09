@@ -50,6 +50,76 @@ func TestSQLiteBackendAddListAndFTSSearch(t *testing.T) {
 	}
 }
 
+func TestSQLiteBackendGetItemReturnsFullContent(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
+	backend, err := sqlitebackend.New(dbPath)
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	kb := core.KnowledgeBase{ID: "notes", StoreType: "sqlite", StoreConfig: map[string]any{"path": dbPath}, Enabled: true}
+
+	item, _, _, err := backend.Add(ctx, kb, core.AddInput{KBID: "notes", Title: "Full", Content: "完整内容应该通过 GetItem 返回。", Tags: []string{"retrieval"}, Metadata: map[string]any{"source": "test"}})
+	if err != nil {
+		t.Fatalf("Add returned error: %v", err)
+	}
+
+	got, err := backend.GetItem(ctx, kb, item.ID)
+	if err != nil {
+		t.Fatalf("GetItem returned error: %v", err)
+	}
+	if got.ID != item.ID || got.KBID != "notes" || got.Type != "note" || got.Title != "Full" || got.Content != "完整内容应该通过 GetItem 返回。" {
+		t.Fatalf("unexpected item: %#v", got)
+	}
+	if len(got.Tags) != 1 || got.Tags[0] != "retrieval" {
+		t.Fatalf("expected tag retrieval, got %#v", got.Tags)
+	}
+	if got.Metadata["source"] != "test" {
+		t.Fatalf("expected metadata source test, got %#v", got.Metadata)
+	}
+	if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
+		t.Fatalf("expected timestamps to be populated, got %#v", got)
+	}
+}
+
+func TestSQLiteBackendGetItemIsScopedToKnowledgeBase(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
+	backend, err := sqlitebackend.New(dbPath)
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	notes := core.KnowledgeBase{ID: "notes", StoreType: "sqlite", StoreConfig: map[string]any{"path": dbPath}, Enabled: true}
+	other := core.KnowledgeBase{ID: "other", StoreType: "sqlite", StoreConfig: map[string]any{"path": dbPath}, Enabled: true}
+
+	item, _, _, err := backend.Add(ctx, notes, core.AddInput{KBID: "notes", Title: "Scoped", Content: "only notes can read this"})
+	if err != nil {
+		t.Fatalf("Add returned error: %v", err)
+	}
+
+	_, err = backend.GetItem(ctx, other, item.ID)
+	var coreErr *core.Error
+	if !errors.As(err, &coreErr) || coreErr.Kind != core.ErrorKindStore || coreErr.Message != "knowledge item not found" {
+		t.Fatalf("expected other KB GetItem to return not found store error, got %v", err)
+	}
+}
+
+func TestSQLiteBackendGetItemReturnsErrorForMissingItem(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
+	backend, err := sqlitebackend.New(dbPath)
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	kb := core.KnowledgeBase{ID: "notes", StoreType: "sqlite", StoreConfig: map[string]any{"path": dbPath}, Enabled: true}
+
+	_, err = backend.GetItem(ctx, kb, "404")
+	var coreErr *core.Error
+	if !errors.As(err, &coreErr) || coreErr.Kind != core.ErrorKindStore || coreErr.Message != "knowledge item not found" {
+		t.Fatalf("expected missing item to return not found store error, got %v", err)
+	}
+}
+
 func TestSQLiteBackendDeleteItemRemovesListAndSearchResults(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
@@ -98,6 +168,61 @@ func TestSQLiteBackendCreatesParentDirectory(t *testing.T) {
 	}
 	if _, err := os.Stat(dbPath); err != nil {
 		t.Fatalf("expected sqlite db file to exist: %v", err)
+	}
+}
+
+func TestSQLiteMultiBackendRoutesByDatabasePath(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	onePath := filepath.Join(root, "one.db")
+	twoPath := filepath.Join(root, "two.db")
+	oneKB := core.KnowledgeBase{ID: "one", StoreType: "sqlite", StoreConfig: map[string]any{"path": onePath}, Enabled: true}
+	twoKB := core.KnowledgeBase{ID: "two", StoreType: "sqlite", StoreConfig: map[string]any{"path": twoPath}, Enabled: true}
+	backend, err := sqlitebackend.NewMulti([]core.KnowledgeBase{oneKB, twoKB})
+	if err != nil {
+		t.Fatalf("NewMulti returned error: %v", err)
+	}
+
+	if _, _, _, err := backend.Add(ctx, oneKB, core.AddInput{KBID: "one", Title: "First", Content: "stored in first db"}); err != nil {
+		t.Fatalf("Add one returned error: %v", err)
+	}
+	if _, _, _, err := backend.Add(ctx, twoKB, core.AddInput{KBID: "two", Title: "Second", Content: "stored in second db"}); err != nil {
+		t.Fatalf("Add two returned error: %v", err)
+	}
+	if err := backend.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	oneBackend, err := sqlitebackend.New(onePath)
+	if err != nil {
+		t.Fatalf("New one returned error: %v", err)
+	}
+	defer func() { _ = oneBackend.Close() }()
+	twoBackend, err := sqlitebackend.New(twoPath)
+	if err != nil {
+		t.Fatalf("New two returned error: %v", err)
+	}
+	defer func() { _ = twoBackend.Close() }()
+
+	oneItems, err := oneBackend.ListItems(ctx, oneKB)
+	if err != nil {
+		t.Fatalf("List one from one db returned error: %v", err)
+	}
+	if len(oneItems) != 1 || oneItems[0].Title != "First" {
+		t.Fatalf("unexpected one db one items: %#v", oneItems)
+	}
+	if items, err := oneBackend.ListItems(ctx, twoKB); err != nil || len(items) != 0 {
+		t.Fatalf("expected no two items in one db, got %#v, err %v", items, err)
+	}
+	if items, err := twoBackend.ListItems(ctx, oneKB); err != nil || len(items) != 0 {
+		t.Fatalf("expected no one items in two db, got %#v, err %v", items, err)
+	}
+	twoItems, err := twoBackend.ListItems(ctx, twoKB)
+	if err != nil {
+		t.Fatalf("List two from two db returned error: %v", err)
+	}
+	if len(twoItems) != 1 || twoItems[0].Title != "Second" {
+		t.Fatalf("unexpected two db two items: %#v", twoItems)
 	}
 }
 

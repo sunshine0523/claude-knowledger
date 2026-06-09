@@ -3,7 +3,6 @@ package service_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,6 +23,10 @@ func (f fakeBackend) Add(context.Context, core.KnowledgeBase, core.AddInput) (co
 
 func (f fakeBackend) Search(context.Context, core.KnowledgeBase, core.SearchOptions) ([]core.SearchHit, error) {
 	return f.hits, nil
+}
+
+func (f fakeBackend) GetItem(context.Context, core.KnowledgeBase, string) (core.KnowledgeItem, error) {
+	return core.KnowledgeItem{ID: "1", KBID: "docs", Title: "Doc", Content: "Content"}, nil
 }
 
 func (f fakeBackend) ListItems(context.Context, core.KnowledgeBase) ([]core.KnowledgeItem, error) {
@@ -51,6 +54,19 @@ func (r *recordingBackend) Search(_ context.Context, _ core.KnowledgeBase, opt c
 	return r.hits, nil
 }
 
+func (r *recordingBackend) GetItem(_ context.Context, kb core.KnowledgeBase, itemID string) (core.KnowledgeItem, error) {
+	for _, hit := range r.hits {
+		if hit.ItemID == itemID {
+			content := hit.Snippet
+			if content == "" {
+				content = hit.ContentPreview
+			}
+			return core.KnowledgeItem{ID: itemID, KBID: kb.ID, Title: hit.Title, Content: content}, nil
+		}
+	}
+	return core.KnowledgeItem{}, &core.Error{Kind: core.ErrorKindStore, Message: "knowledge item not found"}
+}
+
 func (r *recordingBackend) ListItems(context.Context, core.KnowledgeBase) ([]core.KnowledgeItem, error) {
 	return nil, nil
 }
@@ -62,20 +78,6 @@ func (r *recordingBackend) DeleteItem(context.Context, core.KnowledgeBase, strin
 func (r *recordingBackend) SupportsSemantic(core.KnowledgeBase) bool { return r.semantic }
 
 func testBackendBuilder(kbs []core.KnowledgeBase) (map[string]core.StoreBackend, error) {
-	var sqlitePath string
-	for _, kb := range kbs {
-		if kb.StoreType != "sqlite" {
-			continue
-		}
-		path, _ := kb.StoreConfig["path"].(string)
-		if sqlitePath == "" {
-			sqlitePath = path
-			continue
-		}
-		if path != sqlitePath {
-			return nil, fmt.Errorf("multiple sqlite database paths are not supported")
-		}
-	}
 	return map[string]core.StoreBackend{"text": fakeBackend{}, "sqlite": fakeBackend{}}, nil
 }
 
@@ -90,6 +92,10 @@ func (failingSemanticBackend) Search(_ context.Context, _ core.KnowledgeBase, op
 		return nil, nil
 	}
 	return nil, errors.New("semantic path unavailable")
+}
+
+func (failingSemanticBackend) GetItem(context.Context, core.KnowledgeBase, string) (core.KnowledgeItem, error) {
+	return core.KnowledgeItem{}, &core.Error{Kind: core.ErrorKindStore, Message: "knowledge item not found"}
 }
 
 func (failingSemanticBackend) ListItems(context.Context, core.KnowledgeBase) ([]core.KnowledgeItem, error) {
@@ -125,6 +131,22 @@ func (h *hybridFallbackBackend) Search(_ context.Context, _ core.KnowledgeBase, 
 	return nil, errors.New("unexpected mode")
 }
 
+func (h *hybridFallbackBackend) GetItem(_ context.Context, kb core.KnowledgeBase, itemID string) (core.KnowledgeItem, error) {
+	for _, hit := range h.lexicalHits {
+		if hit.ItemID == itemID {
+			content := hit.Snippet
+			if content == "" {
+				content = hit.ContentPreview
+			}
+			return core.KnowledgeItem{ID: itemID, KBID: kb.ID, Title: hit.Title, Content: content}, nil
+		}
+	}
+	if itemID == "lex" {
+		return core.KnowledgeItem{ID: "lex", KBID: kb.ID, Content: "lex"}, nil
+	}
+	return core.KnowledgeItem{}, &core.Error{Kind: core.ErrorKindStore, Message: "knowledge item not found"}
+}
+
 func (h *hybridFallbackBackend) ListItems(context.Context, core.KnowledgeBase) ([]core.KnowledgeItem, error) {
 	return nil, nil
 }
@@ -137,6 +159,8 @@ func (h *hybridFallbackBackend) SupportsSemantic(core.KnowledgeBase) bool { retu
 
 type itemRecordingBackend struct {
 	items       []core.KnowledgeItem
+	gotKB       string
+	gotItem     string
 	deletedKB   string
 	deletedItem string
 }
@@ -152,6 +176,10 @@ func (b *closeRecordingBackend) Add(context.Context, core.KnowledgeBase, core.Ad
 
 func (b *closeRecordingBackend) Search(context.Context, core.KnowledgeBase, core.SearchOptions) ([]core.SearchHit, error) {
 	return nil, nil
+}
+
+func (b *closeRecordingBackend) GetItem(context.Context, core.KnowledgeBase, string) (core.KnowledgeItem, error) {
+	return core.KnowledgeItem{}, &core.Error{Kind: core.ErrorKindStore, Message: "knowledge item not found"}
 }
 
 func (b *closeRecordingBackend) ListItems(context.Context, core.KnowledgeBase) ([]core.KnowledgeItem, error) {
@@ -177,6 +205,18 @@ func (b *itemRecordingBackend) Search(context.Context, core.KnowledgeBase, core.
 	return nil, nil
 }
 
+func (b *itemRecordingBackend) GetItem(_ context.Context, kb core.KnowledgeBase, itemID string) (core.KnowledgeItem, error) {
+	b.gotKB = kb.ID
+	b.gotItem = itemID
+	for _, item := range b.items {
+		if item.ID == itemID && (item.KBID == "" || item.KBID == kb.ID) {
+			item.KBID = kb.ID
+			return item, nil
+		}
+	}
+	return core.KnowledgeItem{}, &core.Error{Kind: core.ErrorKindStore, Message: "knowledge item not found"}
+}
+
 func (b *itemRecordingBackend) ListItems(_ context.Context, kb core.KnowledgeBase) ([]core.KnowledgeItem, error) {
 	items := make([]core.KnowledgeItem, 0, len(b.items))
 	for _, item := range b.items {
@@ -195,6 +235,45 @@ func (b *itemRecordingBackend) DeleteItem(_ context.Context, kb core.KnowledgeBa
 }
 
 func (b *itemRecordingBackend) SupportsSemantic(core.KnowledgeBase) bool { return false }
+
+type itemSearchBackend struct {
+	hits     []core.SearchHit
+	items    map[string]core.KnowledgeItem
+	getErr   error
+	semantic bool
+}
+
+func (b *itemSearchBackend) Add(context.Context, core.KnowledgeBase, core.AddInput) (core.KnowledgeItem, core.IngestionResult, core.IndexStatus, error) {
+	return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, nil
+}
+
+func (b *itemSearchBackend) Search(context.Context, core.KnowledgeBase, core.SearchOptions) ([]core.SearchHit, error) {
+	return b.hits, nil
+}
+
+func (b *itemSearchBackend) GetItem(_ context.Context, kb core.KnowledgeBase, itemID string) (core.KnowledgeItem, error) {
+	if b.getErr != nil {
+		return core.KnowledgeItem{}, b.getErr
+	}
+	item, ok := b.items[itemID]
+	if !ok || (item.KBID != "" && item.KBID != kb.ID) {
+		return core.KnowledgeItem{}, &core.Error{Kind: core.ErrorKindStore, Message: "knowledge item not found"}
+	}
+	item.KBID = kb.ID
+	return item, nil
+}
+
+func (b *itemSearchBackend) ListItems(context.Context, core.KnowledgeBase) ([]core.KnowledgeItem, error) {
+	return nil, nil
+}
+
+func (b *itemSearchBackend) DeleteItem(context.Context, core.KnowledgeBase, string) error {
+	return nil
+}
+
+func (b *itemSearchBackend) SupportsSemantic(core.KnowledgeBase) bool { return b.semantic }
+
+func countRunes(s string) int { return len([]rune(s)) }
 
 func TestManagedServiceCreatesAndDeletesRuntimeKnowledgeBase(t *testing.T) {
 	static := []config.KnowledgeBaseConfig{{ID: "default", StoreType: "sqlite", StoreConfig: map[string]any{"path": filepath.Join(t.TempDir(), "db")}, Enabled: true}}
@@ -237,7 +316,7 @@ func TestManagedServiceRejectsStaticDelete(t *testing.T) {
 	}
 }
 
-func TestManagedServiceValidatesSQLitePathConstraintBeforePersisting(t *testing.T) {
+func TestManagedServiceAllowsMultipleSQLitePaths(t *testing.T) {
 	basePath := filepath.Join(t.TempDir(), "db")
 	reg := registry.New([]config.KnowledgeBaseConfig{{ID: "default", StoreType: "sqlite", StoreConfig: map[string]any{"path": basePath}, Enabled: true}}, registry.NewMemoryStore(nil))
 	svc, err := service.NewManaged(reg, testBackendBuilder)
@@ -245,18 +324,16 @@ func TestManagedServiceValidatesSQLitePathConstraintBeforePersisting(t *testing.
 		t.Fatalf("NewManaged returned error: %v", err)
 	}
 
-	if _, err := svc.CreateKnowledgeBase(context.Background(), service.CreateKnowledgeBaseInput{ID: "notes", StoreType: "sqlite", Path: basePath}); err != nil {
-		t.Fatalf("expected same sqlite path to succeed, got %v", err)
-	}
-	if _, err := svc.CreateKnowledgeBase(context.Background(), service.CreateKnowledgeBaseInput{ID: "other", StoreType: "sqlite", Path: filepath.Join(t.TempDir(), "other.db")}); err == nil {
-		t.Fatalf("expected different sqlite path to fail")
+	otherPath := filepath.Join(t.TempDir(), "other.db")
+	if _, err := svc.CreateKnowledgeBase(context.Background(), service.CreateKnowledgeBaseInput{ID: "other", StoreType: "sqlite", Path: otherPath}); err != nil {
+		t.Fatalf("expected different sqlite path to succeed, got %v", err)
 	}
 	runtimeItems, err := reg.RuntimeItems()
 	if err != nil {
 		t.Fatalf("RuntimeItems returned error: %v", err)
 	}
-	if len(runtimeItems) != 1 || runtimeItems[0].ID != "notes" {
-		t.Fatalf("expected failed sqlite create not to persist, got %#v", runtimeItems)
+	if len(runtimeItems) != 1 || runtimeItems[0].ID != "other" || runtimeItems[0].StoreConfig["path"] != otherPath {
+		t.Fatalf("expected runtime sqlite KB with different path to persist, got %#v", runtimeItems)
 	}
 }
 
@@ -296,6 +373,38 @@ func TestServiceListsAndDeletesKnowledgeItems(t *testing.T) {
 	}
 	if backend.deletedKB != "docs" || backend.deletedItem != "item-1" {
 		t.Fatalf("expected delete docs/item-1, got %q/%q", backend.deletedKB, backend.deletedItem)
+	}
+}
+
+func TestServiceGetsKnowledgeItem(t *testing.T) {
+	backend := &itemRecordingBackend{items: []core.KnowledgeItem{{ID: "item-1", KBID: "docs", Title: "Doc", Content: "full body"}}}
+	svc := service.New(
+		[]core.KnowledgeBase{{ID: "docs", StoreType: "text", Enabled: true}},
+		map[string]core.StoreBackend{"text": backend},
+	)
+
+	item, err := svc.GetKnowledgeItem(context.Background(), "docs", "item-1")
+	if err != nil {
+		t.Fatalf("GetKnowledgeItem returned error: %v", err)
+	}
+	if item.ID != "item-1" || item.KBID != "docs" || item.Content != "full body" {
+		t.Fatalf("unexpected item: %#v", item)
+	}
+	if backend.gotKB != "docs" || backend.gotItem != "item-1" {
+		t.Fatalf("expected backend get docs/item-1, got %q/%q", backend.gotKB, backend.gotItem)
+	}
+}
+
+func TestServiceGetKnowledgeItemValidatesInputs(t *testing.T) {
+	svc := service.New(nil, nil)
+	if _, err := svc.GetKnowledgeItem(context.Background(), "", "item"); err == nil {
+		t.Fatalf("expected empty kb id to fail")
+	}
+	if _, err := svc.GetKnowledgeItem(context.Background(), "docs", ""); err == nil {
+		t.Fatalf("expected empty item id to fail")
+	}
+	if _, err := svc.GetKnowledgeItem(context.Background(), "missing", "item"); err == nil {
+		t.Fatalf("expected missing KB get to fail")
 	}
 }
 
@@ -346,6 +455,181 @@ func TestSearchAggregatesAcrossEnabledKnowledgeBases(t *testing.T) {
 	}
 	if result.Hits[0].KBID != "notes" {
 		t.Fatalf("expected higher score hit first, got %q", result.Hits[0].KBID)
+	}
+}
+
+func TestSearchReturnsQueryCenteredSnippetInsteadOfFullContent(t *testing.T) {
+	prefix := strings.Repeat("前", 150)
+	suffix := strings.Repeat("后", 150)
+	content := prefix + "needle" + suffix
+	backend := &itemSearchBackend{
+		hits:  []core.SearchHit{{ItemID: "item-1", KBID: "docs", Title: "Doc", Snippet: content, ContentPreview: content, Score: 1, MatchMode: "lexical", SourceBackend: "text"}},
+		items: map[string]core.KnowledgeItem{"item-1": {ID: "item-1", KBID: "docs", Title: "Doc", Content: content}},
+	}
+	svc := service.New(
+		[]core.KnowledgeBase{{ID: "docs", StoreType: "text", Enabled: true}},
+		map[string]core.StoreBackend{"text": backend},
+	)
+
+	result, err := svc.Search(context.Background(), core.SearchOptions{Query: "needle", Limit: 10})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(result.Hits) != 1 {
+		t.Fatalf("expected 1 hit, got %#v", result.Hits)
+	}
+	snippet := result.Hits[0].Snippet
+	if snippet == content || result.Hits[0].ContentPreview == content {
+		t.Fatalf("expected bounded snippet, got hit %#v", result.Hits[0])
+	}
+	if !strings.Contains(snippet, "needle") {
+		t.Fatalf("expected snippet to contain query term, got %q", snippet)
+	}
+	if !strings.HasPrefix(snippet, "…") || !strings.HasSuffix(snippet, "…") {
+		t.Fatalf("expected ellipses around middle snippet, got %q", snippet)
+	}
+	expectedRunes := 120 + countRunes("needle") + 120
+	if countRunes(strings.Trim(snippet, "…")) != expectedRunes {
+		t.Fatalf("expected %d runes inside snippet, got %d in %q", expectedRunes, countRunes(strings.Trim(snippet, "…")), snippet)
+	}
+	if result.Hits[0].ContentPreview != snippet {
+		t.Fatalf("expected ContentPreview to equal Snippet, got %#v", result.Hits[0])
+	}
+}
+
+func TestSearchSnippetUsesRuneOffsetsWhenLowercaseChangesByteLength(t *testing.T) {
+	content := "İ" + strings.Repeat("前", 150) + "needle" + strings.Repeat("后", 150)
+	backend := &itemSearchBackend{
+		hits:  []core.SearchHit{{ItemID: "item-1", KBID: "docs", Title: "Doc", Snippet: content, ContentPreview: content, Score: 1, MatchMode: "lexical", SourceBackend: "text"}},
+		items: map[string]core.KnowledgeItem{"item-1": {ID: "item-1", KBID: "docs", Title: "Doc", Content: content}},
+	}
+	svc := service.New(
+		[]core.KnowledgeBase{{ID: "docs", StoreType: "text", Enabled: true}},
+		map[string]core.StoreBackend{"text": backend},
+	)
+
+	result, err := svc.Search(context.Background(), core.SearchOptions{Query: "needle", Limit: 10})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(result.Hits) != 1 {
+		t.Fatalf("expected 1 hit, got %#v", result.Hits)
+	}
+	snippet := result.Hits[0].Snippet
+	if !strings.Contains(snippet, "needle") {
+		t.Fatalf("expected snippet to contain query term, got %q", snippet)
+	}
+	if !strings.HasPrefix(snippet, "…") || !strings.HasSuffix(snippet, "…") {
+		t.Fatalf("expected ellipses around middle snippet, got %q", snippet)
+	}
+	inside := strings.TrimSuffix(strings.TrimPrefix(snippet, "…"), "…")
+	if strings.HasPrefix(inside, "İ") {
+		t.Fatalf("expected snippet not to start at the content beginning, got %q", snippet)
+	}
+	parts := strings.Split(inside, "needle")
+	if len(parts) != 2 {
+		t.Fatalf("expected one query term in snippet, got %q", snippet)
+	}
+	if countRunes(parts[0]) != 120 || countRunes(parts[1]) != 120 {
+		t.Fatalf("expected needle centered with 120 runes on each side, got %d before and %d after in %q", countRunes(parts[0]), countRunes(parts[1]), snippet)
+	}
+	if countRunes(inside) != 246 {
+		t.Fatalf("expected 246 runes inside snippet, got %d in %q", countRunes(inside), snippet)
+	}
+}
+
+func TestSearchUsesContentStartWhenQueryTermIsNotLiteral(t *testing.T) {
+	content := strings.Repeat("文", 300)
+	backend := &itemSearchBackend{
+		hits:     []core.SearchHit{{ItemID: "item-1", KBID: "docs", Title: "Doc", Snippet: "semantic full fallback", ContentPreview: "semantic full fallback", Score: 1, MatchMode: "semantic", SourceBackend: "chroma"}},
+		items:    map[string]core.KnowledgeItem{"item-1": {ID: "item-1", KBID: "docs", Title: "Doc", Content: content}},
+		semantic: true,
+	}
+	svc := service.New(
+		[]core.KnowledgeBase{{ID: "docs", StoreType: "sqlite", Enabled: true}},
+		map[string]core.StoreBackend{"sqlite": backend},
+	)
+
+	result, err := svc.Search(context.Background(), core.SearchOptions{Query: "missing", SearchMode: "semantic", Limit: 10})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(result.Hits) != 1 {
+		t.Fatalf("expected 1 hit, got %#v", result.Hits)
+	}
+	snippet := result.Hits[0].Snippet
+	if countRunes(strings.TrimSuffix(snippet, "…")) != 240 {
+		t.Fatalf("expected 240-rune prefix snippet, got %d in %q", countRunes(strings.TrimSuffix(snippet, "…")), snippet)
+	}
+	if !strings.HasSuffix(snippet, "…") {
+		t.Fatalf("expected suffix ellipsis for truncated prefix, got %q", snippet)
+	}
+	if result.Hits[0].ContentPreview != snippet {
+		t.Fatalf("expected ContentPreview to equal Snippet, got %#v", result.Hits[0])
+	}
+}
+
+func TestSearchUsesContentStartWhenFirstQueryTermIsAbsent(t *testing.T) {
+	content := strings.Repeat("x", 300) + "needle"
+	backend := &itemSearchBackend{
+		hits:  []core.SearchHit{{ItemID: "item-1", KBID: "docs", Title: "Doc", Snippet: content, ContentPreview: content, Score: 1, MatchMode: "lexical", SourceBackend: "text"}},
+		items: map[string]core.KnowledgeItem{"item-1": {ID: "item-1", KBID: "docs", Title: "Doc", Content: content}},
+	}
+	svc := service.New(
+		[]core.KnowledgeBase{{ID: "docs", StoreType: "text", Enabled: true}},
+		map[string]core.StoreBackend{"text": backend},
+	)
+
+	result, err := svc.Search(context.Background(), core.SearchOptions{Query: "missing needle", Limit: 10})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(result.Hits) != 1 {
+		t.Fatalf("expected 1 hit, got %#v", result.Hits)
+	}
+	expected := strings.Repeat("x", 240) + "…"
+	if result.Hits[0].Snippet != expected {
+		t.Fatalf("expected first-term-missing fallback snippet %q, got %q", expected, result.Hits[0].Snippet)
+	}
+	if strings.Contains(result.Hits[0].Snippet, "needle") {
+		t.Fatalf("expected first-term-missing fallback not to include later query term, got %q", result.Hits[0].Snippet)
+	}
+	if result.Hits[0].ContentPreview != result.Hits[0].Snippet {
+		t.Fatalf("expected ContentPreview to equal Snippet, got %#v", result.Hits[0])
+	}
+}
+
+func TestSearchKeepsHitAndWarnsWhenSnippetContentLookupFails(t *testing.T) {
+	longFallback := strings.Repeat("p", 300)
+	backend := &itemSearchBackend{
+		hits:   []core.SearchHit{{ItemID: "missing", KBID: "docs", Title: "Doc", Snippet: "needle", ContentPreview: longFallback, Score: 1, MatchMode: "lexical", SourceBackend: "text"}},
+		items:  map[string]core.KnowledgeItem{},
+		getErr: &core.Error{Kind: core.ErrorKindStore, Message: "knowledge item not found"},
+	}
+	svc := service.New(
+		[]core.KnowledgeBase{{ID: "docs", StoreType: "text", Enabled: true}},
+		map[string]core.StoreBackend{"text": backend},
+	)
+
+	result, err := svc.Search(context.Background(), core.SearchOptions{Query: "needle", Limit: 10})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(result.Hits) != 1 {
+		t.Fatalf("expected hit to be preserved, got %#v", result.Hits)
+	}
+	expected := strings.Repeat("p", 240) + "…"
+	if result.Hits[0].Snippet != expected {
+		t.Fatalf("expected fallback snippet to prefer content preview %q, got %q", expected, result.Hits[0].Snippet)
+	}
+	if result.Hits[0].Snippet == "needle" || strings.Contains(result.Hits[0].Snippet, "needle") {
+		t.Fatalf("expected fallback snippet not to prefer hit snippet, got %q", result.Hits[0].Snippet)
+	}
+	if result.Hits[0].ContentPreview != result.Hits[0].Snippet {
+		t.Fatalf("expected ContentPreview to equal Snippet, got %#v", result.Hits[0])
+	}
+	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "could not load full content") {
+		t.Fatalf("expected lookup warning, got %#v", result.Warnings)
 	}
 }
 
