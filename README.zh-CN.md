@@ -102,6 +102,42 @@ http://127.0.0.1:34125/
 
 通过 Web 控制台创建的运行时知识库默认写入 `~/.knowledger/registry.json`。`knowledger.yaml` 中定义的静态知识库在控制台中只读展示。删除运行时知识库只会移除注册表记录，不会删除 SQLite 数据库、文本目录或 Markdown 文件。
 
+## MCP Server
+
+通过 stdio 将 Knowledger 启动为本地 MCP server：
+
+```bash
+knowledger mcp
+```
+
+MCP client 配置示例：
+
+```json
+{
+  "mcpServers": {
+    "knowledger": {
+      "command": "/absolute/path/to/knowledger",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+使用显式配置文件：
+
+```json
+{
+  "mcpServers": {
+    "knowledger": {
+      "command": "/absolute/path/to/knowledger",
+      "args": ["--config", "/absolute/path/to/knowledger.yaml", "mcp"]
+    }
+  }
+}
+```
+
+MCP server 暴露 `search_knowledge`、`get_knowledge_item`、`add_knowledge_item` 和 `list_knowledge_bases`。
+
 ## 配置
 
 复制示例配置：

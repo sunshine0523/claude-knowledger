@@ -10,6 +10,7 @@ import (
 	"github.com/kindbrave/knowledger/internal/config"
 	"github.com/kindbrave/knowledger/internal/core"
 	"github.com/kindbrave/knowledger/internal/registry"
+	"github.com/kindbrave/knowledger/internal/service"
 )
 
 func TestBuildServiceUsesDefaultSQLiteKnowledgeBase(t *testing.T) {
@@ -145,5 +146,28 @@ func TestBuildServiceAllowsMultipleSQLitePaths(t *testing.T) {
 	}
 	if _, err := os.Stat(twoPath); err != nil {
 		t.Fatalf("expected second sqlite db to exist: %v", err)
+	}
+}
+
+func TestRunDefaultInvokesMCPRunner(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	called := false
+	restore := app.SetMCPRunnerForTest(func(svc *service.Service) error {
+		called = true
+		if svc == nil {
+			t.Fatalf("expected service")
+		}
+		if len(svc.ListKnowledgeBases()) != 1 {
+			t.Fatalf("expected default knowledge base, got %#v", svc.ListKnowledgeBases())
+		}
+		return nil
+	})
+	defer restore()
+
+	if err := app.RunDefault([]string{"mcp"}); err != nil {
+		t.Fatalf("RunDefault returned error: %v", err)
+	}
+	if !called {
+		t.Fatalf("expected MCP runner to be called")
 	}
 }

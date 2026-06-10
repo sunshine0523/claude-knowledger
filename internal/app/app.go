@@ -2,6 +2,7 @@ package app
 
 import (
 	"github.com/kindbrave/knowledger/internal/adapters/cli"
+	mcpadapter "github.com/kindbrave/knowledger/internal/adapters/mcp"
 	"github.com/kindbrave/knowledger/internal/backends/sqlite"
 	"github.com/kindbrave/knowledger/internal/backends/text"
 	"github.com/kindbrave/knowledger/internal/config"
@@ -9,6 +10,18 @@ import (
 	"github.com/kindbrave/knowledger/internal/registry"
 	"github.com/kindbrave/knowledger/internal/service"
 )
+
+type MCPRunner func(*service.Service) error
+
+var runMCPServer MCPRunner = func(svc *service.Service) error {
+	return mcpadapter.NewServer(svc).ServeStdio()
+}
+
+func SetMCPRunnerForTest(runner MCPRunner) func() {
+	previous := runMCPServer
+	runMCPServer = runner
+	return func() { runMCPServer = previous }
+}
 
 func Run(configPath string, args []string) error {
 	cfg, err := config.Load(configPath)
@@ -77,7 +90,9 @@ func buildBackends(kbs []core.KnowledgeBase) (map[string]core.StoreBackend, erro
 }
 
 func runService(svc *service.Service, address string, args []string) error {
-	cmd := cli.NewRootCommandWithAddress(svc, address)
+	cmd := cli.NewRootCommandWithAddressAndMCPRunner(svc, address, func() error {
+		return runMCPServer(svc)
+	})
 	cmd.SetArgs(args)
 	return cmd.Execute()
 }

@@ -102,6 +102,42 @@ Pages:
 
 Runtime knowledge bases created from the Web dashboard are stored in `~/.knowledger/registry.json` by default. Static knowledge bases defined in `knowledger.yaml` are read-only in the dashboard. Deleting a runtime knowledge base removes only its registry entry; it does not delete SQLite databases, text directories, or Markdown files.
 
+## MCP Server
+
+Start Knowledger as a local MCP server over stdio:
+
+```bash
+knowledger mcp
+```
+
+Example MCP client configuration:
+
+```json
+{
+  "mcpServers": {
+    "knowledger": {
+      "command": "/absolute/path/to/knowledger",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+With an explicit config file:
+
+```json
+{
+  "mcpServers": {
+    "knowledger": {
+      "command": "/absolute/path/to/knowledger",
+      "args": ["--config", "/absolute/path/to/knowledger.yaml", "mcp"]
+    }
+  }
+}
+```
+
+The MCP server exposes `search_knowledge`, `get_knowledge_item`, `add_knowledge_item`, and `list_knowledge_bases`.
+
 ## Configuration
 
 Copy the example config:
