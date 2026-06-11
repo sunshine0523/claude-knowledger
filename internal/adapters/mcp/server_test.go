@@ -121,8 +121,15 @@ func TestMCPHandlersRoundTripThroughService(t *testing.T) {
 	if searchResult.IsError {
 		t.Fatalf("expected search_knowledge success, got %q", firstTextContent(t, searchResult.Content))
 	}
-	if text := firstTextContent(t, searchResult.Content); !strings.Contains(text, "MCP Notes") {
-		t.Fatalf("expected search text to contain MCP Notes, got %q", text)
+	searchText := firstTextContent(t, searchResult.Content)
+	if !strings.Contains(searchText, "MCP Notes") {
+		t.Fatalf("expected search text to contain MCP Notes, got %q", searchText)
+	}
+	if !strings.Contains(searchText, "Snippet") {
+		t.Fatalf("expected search text to include Snippet, got %q", searchText)
+	}
+	if strings.Contains(searchText, "ContentPreview") {
+		t.Fatalf("expected search text to omit ContentPreview, got %q", searchText)
 	}
 
 	getRequest := mcp.CallToolRequest{}
@@ -150,6 +157,13 @@ func TestMCPHandlersRoundTripThroughService(t *testing.T) {
 	}
 	if text := firstTextContent(t, listResult.Content); !strings.Contains(text, "docs") {
 		t.Fatalf("expected list text to contain docs, got %q", text)
+	}
+	structured, ok := listResult.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("expected list structured content to be object, got %T", listResult.StructuredContent)
+	}
+	if _, ok := structured["knowledge_bases"]; !ok {
+		t.Fatalf("expected list structured content to include knowledge_bases")
 	}
 }
 

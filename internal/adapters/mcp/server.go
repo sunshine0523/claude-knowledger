@@ -42,6 +42,24 @@ type addKnowledgeItemInput struct {
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
+type searchKnowledgeResult struct {
+	Hits     []searchKnowledgeHit
+	Warnings []string
+}
+
+type searchKnowledgeHit struct {
+	ItemID        string
+	KBID          string
+	ItemType      string
+	Title         string
+	Snippet       string
+	Score         float64
+	MatchMode     string
+	SourceBackend string
+	Locator       string
+	Metadata      map[string]any
+}
+
 func NewServer(svc *service.Service) *Server {
 	adapter := &Server{svc: svc, server: mcpserver.NewMCPServer(serverName, serverVersion)}
 	adapter.registerTools()
@@ -125,7 +143,26 @@ func (s *Server) handleSearchKnowledge(ctx context.Context, request mcpgo.CallTo
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	return mcpgo.NewToolResultStructuredOnly(result), nil
+	return mcpgo.NewToolResultStructuredOnly(toSearchKnowledgeResult(result)), nil
+}
+
+func toSearchKnowledgeResult(result service.SearchResult) searchKnowledgeResult {
+	hits := make([]searchKnowledgeHit, 0, len(result.Hits))
+	for _, hit := range result.Hits {
+		hits = append(hits, searchKnowledgeHit{
+			ItemID:        hit.ItemID,
+			KBID:          hit.KBID,
+			ItemType:      hit.ItemType,
+			Title:         hit.Title,
+			Snippet:       hit.Snippet,
+			Score:         hit.Score,
+			MatchMode:     hit.MatchMode,
+			SourceBackend: hit.SourceBackend,
+			Locator:       hit.Locator,
+			Metadata:      hit.Metadata,
+		})
+	}
+	return searchKnowledgeResult{Hits: hits, Warnings: result.Warnings}
 }
 
 func (s *Server) handleGetKnowledgeItem(ctx context.Context, request mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
@@ -164,5 +201,5 @@ func (s *Server) handleListKnowledgeBases(ctx context.Context, request mcpgo.Cal
 	if s.svc == nil {
 		return mcpgo.NewToolResultError("service is not configured"), nil
 	}
-	return mcpgo.NewToolResultStructuredOnly(s.svc.ListKnowledgeBases()), nil
+	return mcpgo.NewToolResultStructuredOnly(map[string]any{"knowledge_bases": s.svc.ListKnowledgeBases()}), nil
 }
