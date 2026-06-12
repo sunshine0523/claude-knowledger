@@ -1,0 +1,8 @@
+{
+  "name": "claude-code-knowledger",
+  "version": "0.1.0",
+  "description": "Knowledger integration for Claude Code. Connects Claude Code to the local knowledger MCP server and teaches Claude when to retrieve or capture durable knowledge.",
+  "author": {
+    "name": "KindBrave"
+  }
+}

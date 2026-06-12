@@ -2,5 +2,6 @@
 .omc
 .superpowers
 docs/
-knowledger
+/knowledger
 .codegraph/
+.omo/

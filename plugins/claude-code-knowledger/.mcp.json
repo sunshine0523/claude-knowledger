@@ -1,0 +1,6 @@
+{
+  "knowledger": {
+    "command": "knowledger",
+    "args": ["mcp"]
+  }
+}
