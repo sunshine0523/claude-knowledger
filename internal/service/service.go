@@ -25,6 +25,22 @@ type KnowledgeBaseSummary struct {
 	ItemCount int
 }
 
+type IndexKnowledgeInput struct {
+	KBID    string
+	Rebuild bool
+}
+
+type KnowledgeBaseIndexResult struct {
+	KBID      string           `json:"kb_id"`
+	StoreType string           `json:"store_type"`
+	Result    core.IndexResult `json:"result"`
+}
+
+type IndexKnowledgeResult struct {
+	Results  []KnowledgeBaseIndexResult `json:"results"`
+	Warnings []string                   `json:"warnings,omitempty"`
+}
+
 type BackendBuilder func([]core.KnowledgeBase) (map[string]core.StoreBackend, error)
 
 type CreateKnowledgeBaseInput struct {
@@ -117,6 +133,43 @@ func (s *Service) Add(ctx context.Context, input core.AddInput) (core.KnowledgeI
 		return backend.Add(ctx, kb, input)
 	}
 	return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, &core.Error{Kind: core.ErrorKindConfig, Message: "knowledge base not found"}
+}
+
+func (s *Service) IndexKnowledge(ctx context.Context, input IndexKnowledgeInput) (IndexKnowledgeResult, error) {
+	kbs, backends := s.snapshot()
+	kbID := strings.TrimSpace(input.KBID)
+	result := IndexKnowledgeResult{}
+	matched := false
+	for _, kb := range kbs {
+		if kbID != "" && kb.ID != kbID {
+			continue
+		}
+		matched = true
+		if kbID == "" && !kb.Enabled {
+			continue
+		}
+		backend, ok := backends[kb.StoreType]
+		if !ok {
+			return IndexKnowledgeResult{}, &core.Error{Kind: core.ErrorKindConfig, Message: "backend not registered for store type " + kb.StoreType}
+		}
+		maintainer, ok := backend.(core.IndexMaintainer)
+		if !ok {
+			indexResult := core.IndexResult{Skipped: 1, Warnings: []string{fmt.Sprintf("%s: index maintenance is not supported for %s backend", kb.ID, kb.StoreType)}}
+			result.Results = append(result.Results, KnowledgeBaseIndexResult{KBID: kb.ID, StoreType: kb.StoreType, Result: indexResult})
+			result.Warnings = append(result.Warnings, indexResult.Warnings...)
+			continue
+		}
+		indexResult, err := maintainer.MaintainIndex(ctx, kb, core.IndexOptions{Rebuild: input.Rebuild})
+		if err != nil {
+			return result, err
+		}
+		result.Results = append(result.Results, KnowledgeBaseIndexResult{KBID: kb.ID, StoreType: kb.StoreType, Result: indexResult})
+		result.Warnings = append(result.Warnings, indexResult.Warnings...)
+	}
+	if kbID != "" && !matched {
+		return IndexKnowledgeResult{}, &core.Error{Kind: core.ErrorKindConfig, Message: "knowledge base not found"}
+	}
+	return result, nil
 }
 
 func (s *Service) ListKnowledgeBases() []core.KnowledgeBase {

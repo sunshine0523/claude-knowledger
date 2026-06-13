@@ -18,7 +18,7 @@ func TestRootCommandShowsSearchAndGetSubcommands(t *testing.T) {
 		t.Fatalf("Execute returned error: %v", err)
 	}
 
-	for _, expected := range []string{"search", "get", "mcp"} {
+	for _, expected := range []string{"search", "get", "index", "mcp"} {
 		if !bytes.Contains(buf.Bytes(), []byte(expected)) {
 			t.Fatalf("expected help output to mention %s subcommand, got %s", expected, buf.String())
 		}

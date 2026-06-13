@@ -243,6 +243,44 @@ type itemSearchBackend struct {
 	semantic bool
 }
 
+type maintenanceBackend struct {
+	calls []maintenanceCall
+	res   core.IndexResult
+	err   error
+}
+
+type maintenanceCall struct {
+	kbID    string
+	rebuild bool
+}
+
+func (m *maintenanceBackend) Add(context.Context, core.KnowledgeBase, core.AddInput) (core.KnowledgeItem, core.IngestionResult, core.IndexStatus, error) {
+	return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, nil
+}
+
+func (m *maintenanceBackend) Search(context.Context, core.KnowledgeBase, core.SearchOptions) ([]core.SearchHit, error) {
+	return nil, nil
+}
+
+func (m *maintenanceBackend) GetItem(context.Context, core.KnowledgeBase, string) (core.KnowledgeItem, error) {
+	return core.KnowledgeItem{}, &core.Error{Kind: core.ErrorKindStore, Message: "knowledge item not found"}
+}
+
+func (m *maintenanceBackend) ListItems(context.Context, core.KnowledgeBase) ([]core.KnowledgeItem, error) {
+	return nil, nil
+}
+
+func (m *maintenanceBackend) DeleteItem(context.Context, core.KnowledgeBase, string) error {
+	return nil
+}
+
+func (m *maintenanceBackend) SupportsSemantic(core.KnowledgeBase) bool { return true }
+
+func (m *maintenanceBackend) MaintainIndex(_ context.Context, kb core.KnowledgeBase, opt core.IndexOptions) (core.IndexResult, error) {
+	m.calls = append(m.calls, maintenanceCall{kbID: kb.ID, rebuild: opt.Rebuild})
+	return m.res, m.err
+}
+
 func (b *itemSearchBackend) Add(context.Context, core.KnowledgeBase, core.AddInput) (core.KnowledgeItem, core.IngestionResult, core.IndexStatus, error) {
 	return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, nil
 }
@@ -431,6 +469,65 @@ func TestServiceKnowledgeBaseSummariesIncludeItemCounts(t *testing.T) {
 	}
 	if len(summaries) != 1 || summaries[0].ItemCount != 2 || summaries[0].Record.KnowledgeBase.ID != "docs" {
 		t.Fatalf("unexpected summaries: %#v", summaries)
+	}
+}
+
+func TestServiceIndexesSpecificKnowledgeBaseWithRebuild(t *testing.T) {
+	backend := &maintenanceBackend{res: core.IndexResult{Indexed: 2, Deleted: 2}}
+	svc := service.New(
+		[]core.KnowledgeBase{{ID: "notes", StoreType: "sqlite", Enabled: true}},
+		map[string]core.StoreBackend{"sqlite": backend},
+	)
+
+	result, err := svc.IndexKnowledge(context.Background(), service.IndexKnowledgeInput{KBID: "notes", Rebuild: true})
+	if err != nil {
+		t.Fatalf("IndexKnowledge returned error: %v", err)
+	}
+	if len(result.Results) != 1 || result.Results[0].KBID != "notes" || result.Results[0].Result.Indexed != 2 || result.Results[0].Result.Deleted != 2 {
+		t.Fatalf("unexpected index result: %#v", result)
+	}
+	if len(backend.calls) != 1 || backend.calls[0].kbID != "notes" || !backend.calls[0].rebuild {
+		t.Fatalf("expected rebuild call for notes, got %#v", backend.calls)
+	}
+}
+
+func TestServiceIndexesAllEnabledKnowledgeBasesAndSkipsUnsupported(t *testing.T) {
+	semanticBackend := &maintenanceBackend{res: core.IndexResult{Indexed: 1}}
+	textBackend := fakeBackend{}
+	svc := service.New(
+		[]core.KnowledgeBase{
+			{ID: "docs", StoreType: "text", Enabled: true},
+			{ID: "notes", StoreType: "sqlite", Enabled: true},
+			{ID: "disabled", StoreType: "sqlite", Enabled: false},
+		},
+		map[string]core.StoreBackend{"text": textBackend, "sqlite": semanticBackend},
+	)
+
+	result, err := svc.IndexKnowledge(context.Background(), service.IndexKnowledgeInput{})
+	if err != nil {
+		t.Fatalf("IndexKnowledge returned error: %v", err)
+	}
+	if len(result.Results) != 2 {
+		t.Fatalf("expected results for enabled KBs only, got %#v", result.Results)
+	}
+	if result.Results[0].KBID != "docs" || result.Results[0].Result.Skipped != 1 || len(result.Results[0].Result.Warnings) != 1 {
+		t.Fatalf("expected unsupported docs skip, got %#v", result.Results[0])
+	}
+	if result.Results[1].KBID != "notes" || result.Results[1].Result.Indexed != 1 {
+		t.Fatalf("expected indexed notes result, got %#v", result.Results[1])
+	}
+	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "index maintenance is not supported") {
+		t.Fatalf("expected unsupported warning, got %#v", result.Warnings)
+	}
+	if len(semanticBackend.calls) != 1 || semanticBackend.calls[0].kbID != "notes" {
+		t.Fatalf("expected one notes maintenance call, got %#v", semanticBackend.calls)
+	}
+}
+
+func TestServiceIndexKnowledgeReturnsErrorForMissingKnowledgeBase(t *testing.T) {
+	svc := service.New(nil, nil)
+	if _, err := svc.IndexKnowledge(context.Background(), service.IndexKnowledgeInput{KBID: "missing"}); err == nil {
+		t.Fatalf("expected missing KB to fail")
 	}
 }
 

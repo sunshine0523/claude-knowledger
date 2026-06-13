@@ -323,4 +323,8 @@ func ensureContained(base string, path string) error {
 	return nil
 }
 
+func (b *Backend) MaintainIndex(_ context.Context, kb core.KnowledgeBase, _ core.IndexOptions) (core.IndexResult, error) {
+	return core.IndexResult{Skipped: 1, Warnings: []string{fmt.Sprintf("%s: semantic indexing is not supported for text backend", kb.ID)}}, nil
+}
+
 func (b *Backend) SupportsSemantic(core.KnowledgeBase) bool { return false }

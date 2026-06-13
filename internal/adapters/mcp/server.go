@@ -42,6 +42,11 @@ type addKnowledgeItemInput struct {
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
+type indexKnowledgeInput struct {
+	KBID    string `json:"kb_id,omitempty"`
+	Rebuild bool   `json:"rebuild,omitempty"`
+}
+
 type searchKnowledgeResult struct {
 	Hits     []searchKnowledgeHit
 	Warnings []string
@@ -119,12 +124,23 @@ func (s *Server) registerTools() {
 		mcpgo.WithIdempotentHintAnnotation(true),
 		mcpgo.WithOpenWorldHintAnnotation(false),
 	)
+	indexTool := mcpgo.NewTool(
+		"index_knowledge",
+		mcpgo.WithDescription("Backfill or rebuild semantic indexes for one knowledge base or all enabled knowledge bases."),
+		mcpgo.WithString("kb_id", mcpgo.Description("Optional knowledge base ID. Omit to index all enabled knowledge bases.")),
+		mcpgo.WithBoolean("rebuild", mcpgo.Description("Delete existing semantic vectors before indexing.")),
+		mcpgo.WithReadOnlyHintAnnotation(false),
+		mcpgo.WithDestructiveHintAnnotation(true),
+		mcpgo.WithIdempotentHintAnnotation(true),
+		mcpgo.WithOpenWorldHintAnnotation(false),
+	)
 
-	s.tools = []mcpgo.Tool{searchTool, getTool, addTool, listTool}
+	s.tools = []mcpgo.Tool{searchTool, getTool, addTool, listTool, indexTool}
 	s.server.AddTool(searchTool, s.handleSearchKnowledge)
 	s.server.AddTool(getTool, s.handleGetKnowledgeItem)
 	s.server.AddTool(addTool, s.handleAddKnowledgeItem)
 	s.server.AddTool(listTool, s.handleListKnowledgeBases)
+	s.server.AddTool(indexTool, s.handleIndexKnowledge)
 }
 
 func (s *Server) handleSearchKnowledge(ctx context.Context, request mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
@@ -202,4 +218,19 @@ func (s *Server) handleListKnowledgeBases(ctx context.Context, request mcpgo.Cal
 		return mcpgo.NewToolResultError("service is not configured"), nil
 	}
 	return mcpgo.NewToolResultStructuredOnly(map[string]any{"knowledge_bases": s.svc.ListKnowledgeBases()}), nil
+}
+
+func (s *Server) handleIndexKnowledge(ctx context.Context, request mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	if s.svc == nil {
+		return mcpgo.NewToolResultError("service is not configured"), nil
+	}
+	var input indexKnowledgeInput
+	if err := request.BindArguments(&input); err != nil {
+		return mcpgo.NewToolResultErrorFromErr("invalid arguments", err), nil
+	}
+	result, err := s.svc.IndexKnowledge(ctx, service.IndexKnowledgeInput{KBID: input.KBID, Rebuild: input.Rebuild})
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	return mcpgo.NewToolResultStructuredOnly(result), nil
 }

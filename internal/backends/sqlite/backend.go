@@ -142,6 +142,14 @@ func (m *MultiBackend) DeleteItem(ctx context.Context, kb core.KnowledgeBase, it
 	return backend.DeleteItem(ctx, kb, itemID)
 }
 
+func (m *MultiBackend) MaintainIndex(ctx context.Context, kb core.KnowledgeBase, opt core.IndexOptions) (core.IndexResult, error) {
+	backend, err := m.backend(kb)
+	if err != nil {
+		return core.IndexResult{}, err
+	}
+	return backend.MaintainIndex(ctx, kb, opt)
+}
+
 func (m *MultiBackend) SupportsSemantic(kb core.KnowledgeBase) bool {
 	backend, err := m.backend(kb)
 	if err != nil {
@@ -245,7 +253,7 @@ func (b *Backend) Add(ctx context.Context, kb core.KnowledgeBase, input core.Add
 		_ = tx.Rollback()
 		return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, fmt.Errorf("semantic index failed; sqlite item rolled back: %w", err)
 	}
-	if err := client.Upsert(ctx, semanticCfg.Collection, chroma.Item{ID: item.ID, KBID: item.KBID, Title: item.Title, Content: item.Content, Tags: item.Tags, Metadata: item.Metadata}); err != nil {
+	if err := client.Upsert(ctx, semanticCfg.Collection, chromaItem(item)); err != nil {
 		_ = tx.Rollback()
 		return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, fmt.Errorf("semantic index failed; sqlite item rolled back: %w", err)
 	}
@@ -543,7 +551,7 @@ func (b *Backend) DeleteItem(ctx context.Context, kb core.KnowledgeBase, itemID 
 		_ = json.Unmarshal([]byte(metadataJSON), &metadata)
 		cleanupCtx, cancel := cleanupContext(ctx)
 		defer cancel()
-		restoreErr := client.Upsert(cleanupCtx, cfg.Collection, chroma.Item{ID: fmt.Sprintf("%d", id), KBID: kb.ID, Title: title, Content: content, Tags: splitTags(tags), Metadata: metadata})
+		restoreErr := client.Upsert(cleanupCtx, cfg.Collection, chromaItem(core.KnowledgeItem{ID: fmt.Sprintf("%d", id), KBID: kb.ID, Title: title, Content: content, Tags: splitTags(tags), Metadata: metadata}))
 		commitErr := fmt.Errorf("sqlite commit failed after semantic delete success: %w", err)
 		if restoreErr != nil {
 			return errors.Join(commitErr, fmt.Errorf("semantic restore failed: %w", restoreErr))
@@ -551,6 +559,60 @@ func (b *Backend) DeleteItem(ctx context.Context, kb core.KnowledgeBase, itemID 
 		return commitErr
 	}
 	return nil
+}
+
+func (b *Backend) MaintainIndex(ctx context.Context, kb core.KnowledgeBase, opt core.IndexOptions) (core.IndexResult, error) {
+	cfg, ok := semanticConfig(kb)
+	if !ok {
+		return core.IndexResult{Skipped: 1, Warnings: []string{fmt.Sprintf("%s: semantic indexing is not enabled", kb.ID)}}, nil
+	}
+	client, err := b.semanticClient(cfg)
+	if err != nil {
+		return core.IndexResult{}, &core.Error{Kind: core.ErrorKindIndex, Message: "semantic index client unavailable", Cause: err}
+	}
+	items, err := b.ListItems(ctx, kb)
+	if err != nil {
+		return core.IndexResult{}, err
+	}
+
+	result := core.IndexResult{}
+	if opt.Rebuild {
+		deleted, err := deleteSemanticItems(ctx, client, cfg.Collection, kb.ID, items)
+		if err != nil {
+			return result, &core.Error{Kind: core.ErrorKindIndex, Message: "semantic index rebuild delete failed", Cause: err}
+		}
+		result.Deleted = deleted
+	}
+	for _, item := range items {
+		if err := client.Upsert(ctx, cfg.Collection, chromaItem(item)); err != nil {
+			return result, &core.Error{Kind: core.ErrorKindIndex, Message: fmt.Sprintf("semantic index upsert failed for item %s", item.ID), Cause: err}
+		}
+		result.Indexed++
+	}
+	return result, nil
+}
+
+type knowledgeBaseSemanticDeleter interface {
+	DeleteForKnowledgeBase(context.Context, string, string) error
+}
+
+func deleteSemanticItems(ctx context.Context, client chroma.Client, collection string, kbID string, items []core.KnowledgeItem) (int, error) {
+	if deleter, ok := client.(knowledgeBaseSemanticDeleter); ok {
+		if err := deleter.DeleteForKnowledgeBase(ctx, collection, kbID); err != nil {
+			return 0, err
+		}
+		return len(items), nil
+	}
+	for _, item := range items {
+		if err := client.Delete(ctx, collection, item.ID); err != nil {
+			return 0, err
+		}
+	}
+	return len(items), nil
+}
+
+func chromaItem(item core.KnowledgeItem) chroma.Item {
+	return chroma.Item{ID: item.ID, KBID: item.KBID, Title: item.Title, Content: item.Content, Tags: item.Tags, Metadata: item.Metadata}
 }
 
 func splitTags(tags string) []string {

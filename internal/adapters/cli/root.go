@@ -19,6 +19,7 @@ func NewRootCommandWithAddressAndMCPRunner(svc *service.Service, address string,
 	cmd.AddCommand(newSearchCommand(svc))
 	cmd.AddCommand(newGetCommand(svc))
 	cmd.AddCommand(newAddCommand(svc))
+	cmd.AddCommand(newIndexCommand(svc))
 	cmd.AddCommand(newListKBsCommand(svc))
 	cmd.AddCommand(newServeCommand(svc, address))
 	cmd.AddCommand(newMCPCommand(runMCP))

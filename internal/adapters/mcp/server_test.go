@@ -14,10 +14,43 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+type indexToolBackend struct {
+	called  bool
+	rebuild bool
+}
+
+func (b *indexToolBackend) Add(context.Context, core.KnowledgeBase, core.AddInput) (core.KnowledgeItem, core.IngestionResult, core.IndexStatus, error) {
+	return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, nil
+}
+
+func (b *indexToolBackend) Search(context.Context, core.KnowledgeBase, core.SearchOptions) ([]core.SearchHit, error) {
+	return nil, nil
+}
+
+func (b *indexToolBackend) GetItem(context.Context, core.KnowledgeBase, string) (core.KnowledgeItem, error) {
+	return core.KnowledgeItem{}, nil
+}
+
+func (b *indexToolBackend) ListItems(context.Context, core.KnowledgeBase) ([]core.KnowledgeItem, error) {
+	return nil, nil
+}
+
+func (b *indexToolBackend) DeleteItem(context.Context, core.KnowledgeBase, string) error {
+	return nil
+}
+
+func (b *indexToolBackend) SupportsSemantic(core.KnowledgeBase) bool { return true }
+
+func (b *indexToolBackend) MaintainIndex(_ context.Context, _ core.KnowledgeBase, opt core.IndexOptions) (core.IndexResult, error) {
+	b.called = true
+	b.rebuild = opt.Rebuild
+	return core.IndexResult{Indexed: 1, Deleted: 1}, nil
+}
+
 func TestNewServerRegistersKnowledgeToolsInOrder(t *testing.T) {
 	server := mcpadapter.NewServer(nil)
 	tools := server.Tools()
-	want := []string{"search_knowledge", "get_knowledge_item", "add_knowledge_item", "list_knowledge_bases"}
+	want := []string{"search_knowledge", "get_knowledge_item", "add_knowledge_item", "list_knowledge_bases", "index_knowledge"}
 	if len(tools) != len(want) {
 		t.Fatalf("expected %d tools, got %d", len(want), len(tools))
 	}
@@ -59,6 +92,15 @@ func TestAddKnowledgeItemSchema(t *testing.T) {
 	for _, prop := range []string{"tags", "metadata"} {
 		if _, ok := tool.InputSchema.Properties[prop]; !ok {
 			t.Fatalf("expected add_knowledge_item schema to have %q property", prop)
+		}
+	}
+}
+
+func TestIndexKnowledgeSchema(t *testing.T) {
+	tool := findTool(t, mcpadapter.NewServer(nil).Tools(), "index_knowledge")
+	for _, prop := range []string{"kb_id", "rebuild"} {
+		if _, ok := tool.InputSchema.Properties[prop]; !ok {
+			t.Fatalf("expected index_knowledge schema to have %q property", prop)
 		}
 	}
 }
@@ -164,6 +206,45 @@ func TestMCPHandlersRoundTripThroughService(t *testing.T) {
 	}
 	if _, ok := structured["knowledge_bases"]; !ok {
 		t.Fatalf("expected list structured content to include knowledge_bases")
+	}
+}
+
+func TestMCPIndexKnowledgeHandler(t *testing.T) {
+	ctx := context.Background()
+	backend := &indexToolBackend{}
+	svc := service.New([]core.KnowledgeBase{{ID: "notes", StoreType: "sqlite", Enabled: true}}, map[string]core.StoreBackend{"sqlite": backend})
+	adapter := mcpadapter.NewServer(svc)
+
+	client, err := mcpclient.NewInProcessClient(adapter.MCPServer())
+	if err != nil {
+		t.Fatalf("new in-process client: %v", err)
+	}
+	defer client.Close()
+	if err := client.Start(ctx); err != nil {
+		t.Fatalf("start client: %v", err)
+	}
+	initRequest := mcp.InitializeRequest{}
+	initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initRequest.Params.ClientInfo = mcp.Implementation{Name: "knowledger-test", Version: "0.1.0"}
+	if _, err := client.Initialize(ctx, initRequest); err != nil {
+		t.Fatalf("initialize client: %v", err)
+	}
+
+	request := mcp.CallToolRequest{}
+	request.Params.Name = "index_knowledge"
+	request.Params.Arguments = map[string]any{"kb_id": "notes", "rebuild": true}
+	result, err := client.CallTool(ctx, request)
+	if err != nil {
+		t.Fatalf("call index_knowledge: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected index_knowledge success, got %q", firstTextContent(t, result.Content))
+	}
+	if !backend.called || !backend.rebuild {
+		t.Fatalf("expected backend rebuild call, got called=%v rebuild=%v", backend.called, backend.rebuild)
+	}
+	if text := firstTextContent(t, result.Content); !strings.Contains(text, "notes") || !strings.Contains(text, "indexed") {
+		t.Fatalf("expected index result text to include notes and indexed, got %q", text)
 	}
 }
 

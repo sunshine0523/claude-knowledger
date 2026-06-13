@@ -25,3 +25,19 @@ type StoreBackend interface {
 	DeleteItem(context.Context, KnowledgeBase, string) error
 	SupportsSemantic(KnowledgeBase) bool
 }
+
+type IndexOptions struct {
+	Rebuild bool `json:"rebuild"`
+}
+
+type IndexResult struct {
+	Indexed  int      `json:"indexed"`
+	Deleted  int      `json:"deleted"`
+	Skipped  int      `json:"skipped"`
+	Warnings []string `json:"warnings,omitempty"`
+	Errors   []string `json:"errors,omitempty"`
+}
+
+type IndexMaintainer interface {
+	MaintainIndex(context.Context, KnowledgeBase, IndexOptions) (IndexResult, error)
+}

@@ -169,6 +169,18 @@ func (c *client) Delete(ctx context.Context, collection string, itemID string) e
 	return col.Delete(ctx, chromav2.WithIDs(chromav2.DocumentID(itemID)))
 }
 
+func (c *client) DeleteForKnowledgeBase(ctx context.Context, collection string, kbID string) error {
+	if kbID == "" {
+		return fmt.Errorf("knowledge base id is required")
+	}
+	col, err := c.collection(ctx, collection)
+	if err != nil {
+		return err
+	}
+
+	return col.Delete(ctx, chromav2.WithWhere(chromav2.EqString(chromav2.K("kb_id"), kbID)))
+}
+
 func (c *client) Close() error {
 	return c.client.Close()
 }
