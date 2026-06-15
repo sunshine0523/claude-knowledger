@@ -127,6 +127,27 @@ func TestInstallFreshInstallRegistersMCPMarketplaceAndPlugin(t *testing.T) {
 	}
 }
 
+func TestInstallTreatsRealClaudeMissingMCPStderrAsMissing(t *testing.T) {
+	home := t.TempDir()
+	exe := filepath.Join(home, "bin", "knowledger")
+	runner := newFakeRunner()
+	runner.runs[cmdKey("claude", "mcp", "get", "knowledger")] = runResult{
+		result: CommandResult{Stderr: `No MCP server found with name: "knowledger". Configured servers: codegraph`},
+		err:    errors.New("exit status 1"),
+	}
+	runner.runs[cmdKey("claude", "mcp", "add", "--scope", "user", "knowledger", "--", exe, "mcp")] = runResult{}
+	marketplacePath := filepath.Join(home, ".knowledger", "claude-code", "marketplace")
+	runner.runs[cmdKey("claude", "plugin", "marketplace", "add", "--scope", "user", marketplacePath)] = runResult{}
+	runner.runs[cmdKey("claude", "plugin", "install", "--scope", "user", "claude-code-knowledger@knowledger")] = runResult{}
+
+	installer := NewInstaller(WithRunner(runner), WithExecutablePath(func() (string, error) { return exe, nil }), WithHomeDir(func() (string, error) { return home, nil }))
+
+	if err := installer.Install(&strings.Builder{}, &strings.Builder{}); err != nil {
+		t.Fatalf("Install returned error: %v", err)
+	}
+	assertCommandExists(t, runner.calls, call("claude", "mcp", "add", "--scope", "user", "knowledger", "--", exe, "mcp"))
+}
+
 func TestInstallFreshInstallMaterializesMarketplaceDirectoriesWith0755Permissions(t *testing.T) {
 	oldUmask := syscall.Umask(0o077)
 	defer syscall.Umask(oldUmask)
