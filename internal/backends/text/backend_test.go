@@ -554,3 +554,35 @@ func TestTextBackendDeleteItemRemovesFileAndRejectsTraversal(t *testing.T) {
 		t.Fatalf("expected path traversal item id to fail")
 	}
 }
+
+func TestTextBackendSearchTokenizesAndOrs(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	backend := text.New()
+	kb := core.KnowledgeBase{ID: "docs", StoreType: "text", StoreConfig: map[string]any{"path": dir}, Enabled: true}
+
+	if err := os.WriteFile(filepath.Join(dir, "alpha.md"), []byte("contains foo only"), 0o644); err != nil {
+		t.Fatalf("WriteFile alpha returned error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "beta.md"), []byte("contains bar only"), 0o644); err != nil {
+		t.Fatalf("WriteFile beta returned error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "gamma.md"), []byte("nothing relevant here"), 0o644); err != nil {
+		t.Fatalf("WriteFile gamma returned error: %v", err)
+	}
+
+	hits, err := backend.Search(ctx, kb, core.SearchOptions{Query: "foo bar", Limit: 10})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(hits) != 2 {
+		t.Fatalf("expected 2 OR hits, got %d (%#v)", len(hits), hits)
+	}
+	ids := map[string]bool{}
+	for _, h := range hits {
+		ids[h.ItemID] = true
+	}
+	if !ids["alpha"] || !ids["beta"] || ids["gamma"] {
+		t.Fatalf("expected hits {alpha, beta}, got %#v", ids)
+	}
+}

@@ -49,8 +49,16 @@ func (b *Backend) Search(_ context.Context, kb core.KnowledgeBase, opt core.Sear
 		return nil, &core.Error{Kind: core.ErrorKindConfig, Message: "text backend requires store_config.path"}
 	}
 
+	tokens := core.TokenizeQuery(opt.Query)
+	if len(tokens) == 0 {
+		return nil, nil
+	}
+	lowerTokens := make([]string, len(tokens))
+	for i, t := range tokens {
+		lowerTokens[i] = strings.ToLower(t)
+	}
+
 	var hits []core.SearchHit
-	needle := strings.ToLower(opt.Query)
 	if err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -65,20 +73,29 @@ func (b *Backend) Search(_ context.Context, kb core.KnowledgeBase, opt core.Sear
 		if skip {
 			return nil
 		}
-		if strings.Contains(strings.ToLower(content), needle) {
-			hits = append(hits, core.SearchHit{
-				ItemID:         itemIDForPath(dir, path),
-				KBID:           kb.ID,
-				ItemType:       "document",
-				Title:          itemTitleForPath(dir, path),
-				Snippet:        opt.Query,
-				ContentPreview: content,
-				Score:          1,
-				MatchMode:      "lexical",
-				SourceBackend:  "text",
-				Locator:        path,
-			})
+		lowerContent := strings.ToLower(content)
+		matched := false
+		for _, tok := range lowerTokens {
+			if strings.Contains(lowerContent, tok) {
+				matched = true
+				break
+			}
 		}
+		if !matched {
+			return nil
+		}
+		hits = append(hits, core.SearchHit{
+			ItemID:         itemIDForPath(dir, path),
+			KBID:           kb.ID,
+			ItemType:       "document",
+			Title:          itemTitleForPath(dir, path),
+			Snippet:        opt.Query,
+			ContentPreview: content,
+			Score:          1,
+			MatchMode:      "lexical",
+			SourceBackend:  "text",
+			Locator:        path,
+		})
 		return nil
 	}); err != nil {
 		return nil, err
