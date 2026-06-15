@@ -1,0 +1,22 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "knowledger",
+  "description": "Knowledger Claude Code plugin marketplace",
+  "owner": {
+    "name": "KindBrave"
+  },
+  "plugins": [
+    {
+      "name": "claude-code-knowledger",
+      "version": "0.1.0",
+      "description": "Knowledger integration for Claude Code. Connects Claude Code to the local knowledger MCP server and teaches Claude when to retrieve or capture durable knowledge.",
+      "author": {
+        "name": "KindBrave"
+      },
+      "source": "./",
+      "category": "productivity",
+      "tags": ["knowledge", "mcp", "claude-code"]
+    }
+  ],
+  "version": "0.1.0"
+}

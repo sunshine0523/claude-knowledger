@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -169,5 +170,68 @@ func TestRunDefaultInvokesMCPRunner(t *testing.T) {
 	}
 	if !called {
 		t.Fatalf("expected MCP runner to be called")
+	}
+}
+
+func TestRunDefaultInstallClaudeInvokesInstallRunner(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	called := 0
+	restore := app.SetClaudeInstallRunnerForTest(func(out, errOut io.Writer) error {
+		called++
+		return nil
+	})
+	defer restore()
+
+	if err := app.RunDefault([]string{"install", "--claude"}); err != nil {
+		t.Fatalf("RunDefault returned error: %v", err)
+	}
+	if called != 1 {
+		t.Fatalf("expected install runner to be called once, got %d", called)
+	}
+}
+
+func TestRunInstallClaudeDoesNotLoadConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	called := 0
+	restore := app.SetClaudeInstallRunnerForTest(func(out, errOut io.Writer) error {
+		called++
+		return nil
+	})
+	defer restore()
+
+	if err := app.Run("/path/that/does/not/exist.yaml", []string{"install", "--claude"}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if called != 1 {
+		t.Fatalf("expected install runner to be called once, got %d", called)
+	}
+}
+
+func TestRunWithConfigInstallClaudeDoesNotBuildDefaultService(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	called := 0
+	restore := app.SetClaudeInstallRunnerForTest(func(out, errOut io.Writer) error {
+		called++
+		return nil
+	})
+	defer restore()
+
+	if err := app.RunWithConfig(config.Config{}, []string{"install", "--claude"}); err != nil {
+		t.Fatalf("RunWithConfig returned error: %v", err)
+	}
+	if called != 1 {
+		t.Fatalf("expected install runner to be called once, got %d", called)
+	}
+
+	dbPath, err := config.ExpandHomePath(config.DefaultStoragePath)
+	if err != nil {
+		t.Fatalf("expand default storage path: %v", err)
+	}
+	if _, err := os.Stat(dbPath); !os.IsNotExist(err) {
+		if err == nil {
+			t.Fatalf("expected default sqlite storage not to be created at %s", dbPath)
+		}
+		t.Fatalf("stat default sqlite storage: %v", err)
 	}
 }
