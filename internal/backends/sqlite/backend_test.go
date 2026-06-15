@@ -763,3 +763,38 @@ func (f *itemDeleteOnlySemanticClient) Delete(ctx context.Context, collection st
 func (f *itemDeleteOnlySemanticClient) Close() error {
 	return (*fakeSemanticClient)(f).Close()
 }
+
+func TestSQLiteBackendFTSSearchTokenizedOR(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
+	backend, err := sqlitebackend.New(dbPath)
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	kb := core.KnowledgeBase{ID: "notes", StoreType: "sqlite", StoreConfig: map[string]any{"path": dbPath}, Enabled: true}
+
+	if _, _, _, err := backend.Add(ctx, kb, core.AddInput{KBID: "notes", Title: "first", Content: "alpha only"}); err != nil {
+		t.Fatalf("Add alpha returned error: %v", err)
+	}
+	if _, _, _, err := backend.Add(ctx, kb, core.AddInput{KBID: "notes", Title: "second", Content: "beta only"}); err != nil {
+		t.Fatalf("Add beta returned error: %v", err)
+	}
+	if _, _, _, err := backend.Add(ctx, kb, core.AddInput{KBID: "notes", Title: "third", Content: "gamma unrelated"}); err != nil {
+		t.Fatalf("Add gamma returned error: %v", err)
+	}
+
+	hits, err := backend.Search(ctx, kb, core.SearchOptions{Query: "alpha beta", Limit: 10})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(hits) != 2 {
+		t.Fatalf("expected 2 OR hits, got %d (%#v)", len(hits), hits)
+	}
+	titles := map[string]bool{}
+	for _, h := range hits {
+		titles[h.Title] = true
+	}
+	if !titles["first"] || !titles["second"] || titles["third"] {
+		t.Fatalf("expected hits {first, second}, got %#v", titles)
+	}
+}

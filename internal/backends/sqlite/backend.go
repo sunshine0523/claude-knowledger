@@ -350,13 +350,22 @@ func (b *Backend) searchHybrid(ctx context.Context, kb core.KnowledgeBase, query
 }
 
 func (b *Backend) searchFTS(ctx context.Context, kb core.KnowledgeBase, query string, limit int) ([]core.SearchHit, error) {
+	tokens := core.TokenizeQuery(query)
+	if len(tokens) == 0 {
+		return nil, nil
+	}
+	parts := make([]string, len(tokens))
+	for i, tok := range tokens {
+		parts[i] = `"` + strings.ReplaceAll(tok, `"`, `""`) + `"`
+	}
+	matchExpr := strings.Join(parts, " OR ")
 	rows, err := b.db.QueryContext(ctx, `
 			SELECT k.id, k.title, k.content
 			FROM knowledge_items_fts f
 			JOIN knowledge_items k ON k.id = f.rowid
 			WHERE knowledge_items_fts MATCH ? AND k.kb_id = ?
 			LIMIT ?
-		`, query, kb.ID, limit)
+		`, matchExpr, kb.ID, limit)
 	if err != nil {
 		return nil, err
 	}
