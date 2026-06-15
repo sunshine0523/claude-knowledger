@@ -679,6 +679,7 @@ type fakeSemanticClient struct {
 	deleteErr         error
 	closeErr          error
 	queryHits         []chroma.Hit
+	queryHitsByQuery  map[string][]chroma.Hit
 	afterUpsert       func()
 	afterDelete       func()
 	upserts           []fakeSemanticUpsert
@@ -723,6 +724,11 @@ func (f *fakeSemanticClient) Upsert(ctx context.Context, collection string, item
 
 func (f *fakeSemanticClient) Query(_ context.Context, collection string, query string, limit int) ([]chroma.Hit, error) {
 	f.queries = append(f.queries, fakeSemanticQuery{collection: collection, query: query, limit: limit})
+	if f.queryHitsByQuery != nil {
+		if hits, ok := f.queryHitsByQuery[query]; ok {
+			return hits, f.queryErr
+		}
+	}
 	return f.queryHits, f.queryErr
 }
 
@@ -831,5 +837,67 @@ func TestSQLiteBackendLikeFallbackTokenizedOR(t *testing.T) {
 	}
 	if !titles["first"] || !titles["second"] {
 		t.Fatalf("expected hits to include first and second, got %#v", titles)
+	}
+}
+
+func TestSQLiteBackendSemanticSearchTokenizesAndOrs(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
+	client := &fakeSemanticClient{
+		queryHitsByQuery: map[string][]chroma.Hit{
+			"alpha": {
+				{ItemID: "1", Score: 0.5, Metadata: map[string]any{"kb_id": "notes", "title": "first"}},
+				{ItemID: "2", Score: 0.7, Metadata: map[string]any{"kb_id": "notes", "title": "second"}},
+			},
+			"beta": {
+				{ItemID: "1", Score: 0.9, Metadata: map[string]any{"kb_id": "notes", "title": "first"}},
+				{ItemID: "3", Score: 0.6, Metadata: map[string]any{"kb_id": "notes", "title": "third"}},
+			},
+		},
+	}
+	backend, err := sqlitebackend.New(dbPath, sqlitebackend.WithSemanticClientFactory(func(chroma.Config) (chroma.Client, error) {
+		return client, nil
+	}))
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	kb := semanticKB(dbPath, t.TempDir())
+
+	hits, err := backend.Search(ctx, kb, core.SearchOptions{Query: "alpha beta", SearchMode: "semantic", Limit: 10})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+
+	if len(client.queries) != 2 {
+		t.Fatalf("expected 2 chroma queries (one per token), got %#v", client.queries)
+	}
+	gotQueries := []string{client.queries[0].query, client.queries[1].query}
+	wantQueries := map[string]bool{"alpha": true, "beta": true}
+	for _, q := range gotQueries {
+		if !wantQueries[q] {
+			t.Fatalf("unexpected query token %q in %#v", q, gotQueries)
+		}
+		delete(wantQueries, q)
+	}
+	if len(wantQueries) != 0 {
+		t.Fatalf("missing expected query tokens: %#v (got %#v)", wantQueries, gotQueries)
+	}
+
+	if len(hits) != 3 {
+		t.Fatalf("expected 3 deduped hits, got %d (%#v)", len(hits), hits)
+	}
+	if hits[0].ItemID != "1" || hits[0].Score != 0.9 {
+		t.Fatalf("expected itemID 1 with max score 0.9 first, got %#v", hits[0])
+	}
+	if hits[1].ItemID != "2" || hits[1].Score != 0.7 {
+		t.Fatalf("expected itemID 2 with score 0.7 second, got %#v", hits[1])
+	}
+	if hits[2].ItemID != "3" || hits[2].Score != 0.6 {
+		t.Fatalf("expected itemID 3 with score 0.6 third, got %#v", hits[2])
+	}
+	for _, h := range hits {
+		if h.MatchMode != "semantic" || h.SourceBackend != "chroma" || h.KBID != "notes" {
+			t.Fatalf("unexpected hit envelope: %#v", h)
+		}
 	}
 }

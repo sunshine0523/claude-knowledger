@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -310,15 +311,35 @@ func (b *Backend) searchSemantic(ctx context.Context, kb core.KnowledgeBase, que
 	if !ok {
 		return nil, nil
 	}
+	tokens := core.TokenizeQuery(query)
+	if len(tokens) == 0 {
+		return nil, nil
+	}
 	client, err := b.semanticClient(cfg)
 	if err != nil {
 		return nil, err
 	}
-	hits, err := client.Query(ctx, cfg.Collection, query, limit)
-	if err != nil {
-		return nil, err
+	merged := map[string]chroma.Hit{}
+	for _, tok := range tokens {
+		raw, err := client.Query(ctx, cfg.Collection, tok, limit)
+		if err != nil {
+			return nil, err
+		}
+		for _, hit := range filterSemanticHits(kb.ID, raw) {
+			if prev, exists := merged[hit.ItemID]; !exists || hit.Score > prev.Score {
+				merged[hit.ItemID] = hit
+			}
+		}
 	}
-	return semanticSearchHits(kb.ID, matchMode, filterSemanticHits(kb.ID, hits)), nil
+	deduped := make([]chroma.Hit, 0, len(merged))
+	for _, hit := range merged {
+		deduped = append(deduped, hit)
+	}
+	sort.Slice(deduped, func(i, j int) bool { return deduped[i].Score > deduped[j].Score })
+	if limit > 0 && len(deduped) > limit {
+		deduped = deduped[:limit]
+	}
+	return semanticSearchHits(kb.ID, matchMode, deduped), nil
 }
 
 func (b *Backend) searchHybrid(ctx context.Context, kb core.KnowledgeBase, query string, limit int) ([]core.SearchHit, error) {
