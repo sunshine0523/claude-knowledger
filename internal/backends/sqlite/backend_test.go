@@ -798,3 +798,38 @@ func TestSQLiteBackendFTSSearchTokenizedOR(t *testing.T) {
 		t.Fatalf("expected hits {first, second}, got %#v", titles)
 	}
 }
+
+func TestSQLiteBackendLikeFallbackTokenizedOR(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
+	backend, err := sqlitebackend.New(dbPath)
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	kb := core.KnowledgeBase{ID: "notes", StoreType: "sqlite", StoreConfig: map[string]any{"path": dbPath}, Enabled: true}
+
+	if _, _, _, err := backend.Add(ctx, kb, core.AddInput{KBID: "notes", Title: "first", Content: "alphabetical"}); err != nil {
+		t.Fatalf("Add alphabetical returned error: %v", err)
+	}
+	if _, _, _, err := backend.Add(ctx, kb, core.AddInput{KBID: "notes", Title: "second", Content: "betacarotene"}); err != nil {
+		t.Fatalf("Add betacarotene returned error: %v", err)
+	}
+	if _, _, _, err := backend.Add(ctx, kb, core.AddInput{KBID: "notes", Title: "third", Content: "unrelated"}); err != nil {
+		t.Fatalf("Add unrelated returned error: %v", err)
+	}
+
+	hits, err := backend.Search(ctx, kb, core.SearchOptions{Query: "alph beta", Limit: 10})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(hits) != 2 {
+		t.Fatalf("expected 2 LIKE-fallback OR hits, got %d (%#v)", len(hits), hits)
+	}
+	titles := map[string]bool{}
+	for _, h := range hits {
+		titles[h.Title] = true
+	}
+	if !titles["first"] || !titles["second"] {
+		t.Fatalf("expected hits to include first and second, got %#v", titles)
+	}
+}

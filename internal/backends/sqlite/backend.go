@@ -374,13 +374,27 @@ func (b *Backend) searchFTS(ctx context.Context, kb core.KnowledgeBase, query st
 }
 
 func (b *Backend) searchLike(ctx context.Context, kb core.KnowledgeBase, query string, limit int) ([]core.SearchHit, error) {
-	rows, err := b.db.QueryContext(ctx, `
+	tokens := core.TokenizeQuery(query)
+	if len(tokens) == 0 {
+		return nil, nil
+	}
+	clauses := make([]string, len(tokens))
+	args := make([]any, 0, 1+2*len(tokens)+1)
+	args = append(args, kb.ID)
+	for i, tok := range tokens {
+		clauses[i] = "(title LIKE ? OR content LIKE ?)"
+		pattern := "%" + tok + "%"
+		args = append(args, pattern, pattern)
+	}
+	args = append(args, limit)
+	stmt := `
 			SELECT id, title, content
 			FROM knowledge_items
-			WHERE kb_id = ? AND (title LIKE ? OR content LIKE ?)
+			WHERE kb_id = ? AND (` + strings.Join(clauses, " OR ") + `)
 			ORDER BY id DESC
 			LIMIT ?
-		`, kb.ID, "%"+query+"%", "%"+query+"%", limit)
+		`
+	rows, err := b.db.QueryContext(ctx, stmt, args...)
 	if err != nil {
 		return nil, err
 	}
