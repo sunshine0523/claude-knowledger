@@ -28,6 +28,14 @@ func TestTokenizeQuery(t *testing.T) {
 		{"dedup keeps first occurrence order", "a b a c b", []string{"a", "b", "c"}},
 		{"mixed cjk and ascii", "alpha 语义 beta", []string{"alpha", "语义", "beta"}},
 		{"digits stay", "v1 v2", []string{"v1", "v2"}},
+		{"asterisk splits", "a*b", []string{"a", "b"}},
+		{"colon splits", "a:b", []string{"a", "b"}},
+		{"caret splits", "a^b", []string{"a", "b"}},
+		{"tilde splits", "a~b", []string{"a", "b"}},
+		{"plus splits", "a+b", []string{"a", "b"}},
+		{"equals splits", "a=b", []string{"a", "b"}},
+		{"pipe splits", "a|b", []string{"a", "b"}},
+		{"dollar splits", "$a$b", []string{"a", "b"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
