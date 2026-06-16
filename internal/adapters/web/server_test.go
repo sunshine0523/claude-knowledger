@@ -56,6 +56,10 @@ type fakeWebService struct {
 	lastCreate      service.CreateKnowledgeBaseInput
 	deletedKB       string
 	deletedItem     string
+	deletedScope    string
+	lastListScope   string
+	lastListKB      string
+	lastDeleteScope string
 	hasProjectScope bool
 	projectRoot     string
 }
@@ -84,9 +88,11 @@ func (f *fakeWebService) ListKnowledgeBaseSummaries(context.Context) ([]service.
 	return summaries, nil
 }
 
-func (f *fakeWebService) ListKnowledgeItems(_ context.Context, _ string, kbID string) ([]core.KnowledgeItem, error) {
+func (f *fakeWebService) ListKnowledgeItems(_ context.Context, scope string, kbID string) ([]core.KnowledgeItem, error) {
+	f.lastListScope = scope
+	f.lastListKB = kbID
 	for _, record := range f.records {
-		if record.KnowledgeBase.ID == kbID {
+		if record.KnowledgeBase.ID == kbID && (scope == "" || record.KnowledgeBase.Scope == "" || record.KnowledgeBase.Scope == scope) {
 			items := make([]core.KnowledgeItem, 0, len(f.items))
 			for _, item := range f.items {
 				if item.KBID == kbID {
@@ -99,7 +105,8 @@ func (f *fakeWebService) ListKnowledgeItems(_ context.Context, _ string, kbID st
 	return nil, &core.Error{Kind: core.ErrorKindConfig, Message: "knowledge base not found"}
 }
 
-func (f *fakeWebService) DeleteKnowledgeItem(_ context.Context, _ string, kbID string, itemID string) error {
+func (f *fakeWebService) DeleteKnowledgeItem(_ context.Context, scope string, kbID string, itemID string) error {
+	f.lastDeleteScope = scope
 	f.deletedKB = kbID
 	f.deletedItem = itemID
 	return nil
@@ -110,7 +117,9 @@ func (f *fakeWebService) CreateKnowledgeBase(_ context.Context, input service.Cr
 	return registry.KnowledgeBaseRecord{KnowledgeBase: core.KnowledgeBase{ID: input.ID, Scope: input.Scope, Name: input.Name, StoreType: input.StoreType, StoreConfig: map[string]any{"path": input.Path}, Enabled: true}, Source: registry.SourceRuntime, Deletable: true}, nil
 }
 
-func (f *fakeWebService) DeleteKnowledgeBase(context.Context, string, string) error {
+func (f *fakeWebService) DeleteKnowledgeBase(_ context.Context, scope, id string) error {
+	f.deletedScope = scope
+	f.deletedKB = id
 	return nil
 }
 
@@ -577,7 +586,7 @@ func TestAPIKnowledgeItemsListAndDelete(t *testing.T) {
 	}
 	srv := webadapter.NewServer(fake)
 
-	listRes := serve(t, srv, http.MethodGet, "/api/kbs/docs/items", nil)
+	listRes := serve(t, srv, http.MethodGet, "/api/kbs/global/docs/items", nil)
 	if listRes.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", listRes.Code, listRes.Body.String())
 	}
@@ -599,7 +608,7 @@ func TestAPIKnowledgeItemsListAndDelete(t *testing.T) {
 		t.Fatalf("unexpected item list payload: %#v", payload)
 	}
 
-	deleteRes := serve(t, srv, http.MethodDelete, "/api/kbs/docs/items/item-1", nil)
+	deleteRes := serve(t, srv, http.MethodDelete, "/api/kbs/global/docs/items/item-1", nil)
 	if deleteRes.Code != http.StatusOK {
 		t.Fatalf("expected 200 delete, got %d body=%s", deleteRes.Code, deleteRes.Body.String())
 	}
@@ -608,9 +617,63 @@ func TestAPIKnowledgeItemsListAndDelete(t *testing.T) {
 	}
 }
 
+func TestAPIDeleteKBUsesScopedRoute(t *testing.T) {
+	fake := &fakeWebService{}
+	srv := webadapter.NewServer(fake)
+	res := serve(t, srv, http.MethodDelete, "/api/kbs/project/notes", nil)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+	if fake.deletedKB != "notes" {
+		t.Fatalf("expected deletedKB=notes, got %q", fake.deletedKB)
+	}
+	if fake.deletedScope != core.ScopeProject {
+		t.Fatalf("expected deletedScope=project, got %q", fake.deletedScope)
+	}
+}
+
+func TestAPIListItemsRoutesByScope(t *testing.T) {
+	fake := &fakeWebService{
+		records: []registry.KnowledgeBaseRecord{
+			{KnowledgeBase: core.KnowledgeBase{ID: "notes", Scope: core.ScopeProject, StoreType: "text", Enabled: true}, Source: registry.SourceRuntime, Deletable: true},
+		},
+		items: []core.KnowledgeItem{{ID: "1", KBID: "notes", Title: "T", Content: "C"}},
+	}
+	srv := webadapter.NewServer(fake)
+	res := serve(t, srv, http.MethodGet, "/api/kbs/project/notes/items", nil)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+	if fake.lastListScope != core.ScopeProject || fake.lastListKB != "notes" {
+		t.Fatalf("expected list call (project, notes), got (%q, %q)", fake.lastListScope, fake.lastListKB)
+	}
+}
+
+func TestAPIDeleteItemRoutesByScope(t *testing.T) {
+	fake := &fakeWebService{}
+	srv := webadapter.NewServer(fake)
+	res := serve(t, srv, http.MethodDelete, "/api/kbs/project/notes/items/abc", nil)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+	if fake.lastDeleteScope != core.ScopeProject {
+		t.Fatalf("expected lastDeleteScope=project, got %q", fake.lastDeleteScope)
+	}
+}
+
+func TestAPIDeleteKBRejectsInvalidScope(t *testing.T) {
+	fake := &fakeWebService{}
+	srv := webadapter.NewServer(fake)
+	res := serve(t, srv, http.MethodDelete, "/api/kbs/bogus/notes", nil)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", res.Code, res.Body.String())
+	}
+	assertAPIErrorCode(t, res, "invalid_scope")
+}
+
 func TestAPIKnowledgeItemsMissingKBReturnsNotFound(t *testing.T) {
 	srv := webadapter.NewServer(&fakeWebService{})
-	res := serve(t, srv, http.MethodGet, "/api/kbs/missing/items", nil)
+	res := serve(t, srv, http.MethodGet, "/api/kbs/global/missing/items", nil)
 	if res.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d body=%s", res.Code, res.Body.String())
 	}
@@ -631,7 +694,7 @@ func TestAPICreateAndDeleteRuntimeKB(t *testing.T) {
 		t.Fatalf("expected runtime docs KB after create, got %s", listRes.Body.String())
 	}
 
-	deleteRes := serve(t, srv, http.MethodDelete, "/api/kbs/docs", nil)
+	deleteRes := serve(t, srv, http.MethodDelete, "/api/kbs/global/docs", nil)
 	if deleteRes.Code != http.StatusOK {
 		t.Fatalf("expected 200 delete, got %d body=%s", deleteRes.Code, deleteRes.Body.String())
 	}
@@ -711,7 +774,7 @@ func TestAPICreateRejectsInvalidRequests(t *testing.T) {
 
 func TestAPIDeleteStaticKBReturnsConflict(t *testing.T) {
 	srv := webadapter.NewServer(testService(t))
-	res := serve(t, srv, http.MethodDelete, "/api/kbs/default", nil)
+	res := serve(t, srv, http.MethodDelete, "/api/kbs/global/default", nil)
 
 	if res.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d body=%s", res.Code, res.Body.String())

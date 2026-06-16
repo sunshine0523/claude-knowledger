@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"net/http"
 	"strings"
@@ -158,9 +159,9 @@ func NewServer(svc any) *Server {
 	mux.HandleFunc("GET /debug", s.debug)
 	mux.HandleFunc("GET /api/kbs", s.apiListKBs)
 	mux.HandleFunc("POST /api/kbs", s.apiCreateKB)
-	mux.HandleFunc("DELETE /api/kbs/{id}", s.apiDeleteKB)
-	mux.HandleFunc("GET /api/kbs/{id}/items", s.apiListKnowledgeItems)
-	mux.HandleFunc("DELETE /api/kbs/{id}/items/{item_id}", s.apiDeleteKnowledgeItem)
+	mux.HandleFunc("DELETE /api/kbs/{scope}/{id}", s.apiDeleteKB)
+	mux.HandleFunc("GET /api/kbs/{scope}/{id}/items", s.apiListKnowledgeItems)
+	mux.HandleFunc("DELETE /api/kbs/{scope}/{id}/items/{item_id}", s.apiDeleteKnowledgeItem)
 	mux.HandleFunc("POST /api/search", s.apiSearch)
 	mux.HandleFunc("GET /api/dashboard", s.apiDashboard)
 	mux.HandleFunc("GET /api/project", s.apiProject)
@@ -260,16 +261,21 @@ func (s *Server) apiDeleteKB(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusServiceUnavailable, "service_unavailable", "knowledge base service is unavailable")
 		return
 	}
+	scope, err := pathScope(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_scope", err.Error())
+		return
+	}
 	id := r.PathValue("id")
 	if id == "" {
 		writeAPIError(w, http.StatusBadRequest, "missing_id", "knowledge base id is required")
 		return
 	}
-	if err := s.svc.DeleteKnowledgeBase(r.Context(), core.ScopeGlobal, id); err != nil { // TODO(plan-2): scope
+	if err := s.svc.DeleteKnowledgeBase(r.Context(), scope, id); err != nil {
 		writeAPIError(w, statusForError(err), codeForError(err), err.Error())
 		return
 	}
-	writeAPISuccess(w, http.StatusOK, map[string]any{"deleted_id": id})
+	writeAPISuccess(w, http.StatusOK, map[string]any{"deleted_id": id, "scope": scope})
 }
 
 func (s *Server) apiListKnowledgeItems(w http.ResponseWriter, r *http.Request) {
@@ -277,12 +283,17 @@ func (s *Server) apiListKnowledgeItems(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusServiceUnavailable, "service_unavailable", "knowledge base service is unavailable")
 		return
 	}
+	scope, err := pathScope(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_scope", err.Error())
+		return
+	}
 	id := r.PathValue("id")
 	if id == "" {
 		writeAPIError(w, http.StatusBadRequest, "missing_id", "knowledge base id is required")
 		return
 	}
-	items, err := s.svc.ListKnowledgeItems(r.Context(), core.ScopeGlobal, id) // TODO(plan-2): scope
+	items, err := s.svc.ListKnowledgeItems(r.Context(), scope, id)
 	if err != nil {
 		writeAPIError(w, statusForError(err), codeForError(err), err.Error())
 		return
@@ -294,7 +305,7 @@ func (s *Server) apiListKnowledgeItems(w http.ResponseWriter, r *http.Request) {
 	}
 	var selected kbView
 	for _, view := range summariesToViews(summaries) {
-		if view.ID == id {
+		if view.ID == id && view.Scope == scope {
 			selected = view
 			break
 		}
@@ -307,6 +318,11 @@ func (s *Server) apiDeleteKnowledgeItem(w http.ResponseWriter, r *http.Request) 
 		writeAPIError(w, http.StatusServiceUnavailable, "service_unavailable", "knowledge base service is unavailable")
 		return
 	}
+	scope, err := pathScope(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_scope", err.Error())
+		return
+	}
 	kbID := r.PathValue("id")
 	itemID := r.PathValue("item_id")
 	if kbID == "" {
@@ -317,11 +333,11 @@ func (s *Server) apiDeleteKnowledgeItem(w http.ResponseWriter, r *http.Request) 
 		writeAPIError(w, http.StatusBadRequest, "missing_item_id", "knowledge item id is required")
 		return
 	}
-	if err := s.svc.DeleteKnowledgeItem(r.Context(), core.ScopeGlobal, kbID, itemID); err != nil { // TODO(plan-2): scope
+	if err := s.svc.DeleteKnowledgeItem(r.Context(), scope, kbID, itemID); err != nil {
 		writeAPIError(w, statusForError(err), codeForError(err), err.Error())
 		return
 	}
-	writeAPISuccess(w, http.StatusOK, map[string]any{"kb_id": kbID, "deleted_id": itemID})
+	writeAPISuccess(w, http.StatusOK, map[string]any{"kb_id": kbID, "scope": scope, "deleted_id": itemID})
 }
 
 func (s *Server) apiSearch(w http.ResponseWriter, r *http.Request) {
@@ -468,6 +484,14 @@ func cleanKBIDs(ids []string) []core.ScopedKBRef {
 		out = append(out, core.ScopedKBRef{ID: id})
 	}
 	return out
+}
+
+func pathScope(r *http.Request) (string, error) {
+	raw := strings.TrimSpace(r.PathValue("scope"))
+	if raw == "" {
+		return "", fmt.Errorf("scope is required")
+	}
+	return core.NormalizeScope(raw)
 }
 
 func validSearchMode(mode string) bool {
