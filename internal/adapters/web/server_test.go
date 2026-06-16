@@ -46,16 +46,18 @@ func (fakeBackend) DeleteItem(context.Context, core.KnowledgeBase, string) error
 func (fakeBackend) SupportsSemantic(core.KnowledgeBase) bool { return false }
 
 type fakeWebService struct {
-	records      []registry.KnowledgeBaseRecord
-	items        []core.KnowledgeItem
-	listErr      error
-	searchResult service.SearchResult
-	searchErr    error
-	searchCalled bool
-	lastSearch   core.SearchOptions
-	lastCreate   service.CreateKnowledgeBaseInput
-	deletedKB    string
-	deletedItem  string
+	records         []registry.KnowledgeBaseRecord
+	items           []core.KnowledgeItem
+	listErr         error
+	searchResult    service.SearchResult
+	searchErr       error
+	searchCalled    bool
+	lastSearch      core.SearchOptions
+	lastCreate      service.CreateKnowledgeBaseInput
+	deletedKB       string
+	deletedItem     string
+	hasProjectScope bool
+	projectRoot     string
 }
 
 func (f *fakeWebService) ListKnowledgeBaseRecords() ([]registry.KnowledgeBaseRecord, error) {
@@ -120,6 +122,10 @@ func (f *fakeWebService) Search(_ context.Context, opt core.SearchOptions) (serv
 	}
 	return f.searchResult, nil
 }
+
+func (f *fakeWebService) HasProjectScope() bool { return f.hasProjectScope }
+
+func (f *fakeWebService) ProjectRoot() string { return f.projectRoot }
 
 func TestDashboardRespondsOK(t *testing.T) {
 	srv := webadapter.NewServer(nil)
@@ -655,6 +661,55 @@ func TestKBPageRendersManagementUI(t *testing.T) {
 	if !strings.Contains(body, "Static knowledge bases are read-only") {
 		t.Fatalf("expected static delete control to be disabled, got %s", body)
 	}
+}
+
+func TestAPIProjectReturnsModeAndRoot(t *testing.T) {
+	fake := &fakeWebService{hasProjectScope: true, projectRoot: "/tmp/proj"}
+	srv := webadapter.NewServer(fake)
+	res := serve(t, srv, http.MethodGet, "/api/project", nil)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+	var payload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			InProject   bool   `json:"in_project"`
+			ProjectRoot string `json:"project_root"`
+		} `json:"data"`
+	}
+	decodeResponse(t, res, &payload)
+	if !payload.Success || !payload.Data.InProject || payload.Data.ProjectRoot != "/tmp/proj" {
+		t.Fatalf("unexpected payload: %#v", payload)
+	}
+}
+
+func TestAPIProjectReturnsNotInProjectByDefault(t *testing.T) {
+	fake := &fakeWebService{}
+	srv := webadapter.NewServer(fake)
+	res := serve(t, srv, http.MethodGet, "/api/project", nil)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", res.Code)
+	}
+	var payload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			InProject   bool   `json:"in_project"`
+			ProjectRoot string `json:"project_root"`
+		} `json:"data"`
+	}
+	decodeResponse(t, res, &payload)
+	if payload.Data.InProject || payload.Data.ProjectRoot != "" {
+		t.Fatalf("expected not in project, got %#v", payload.Data)
+	}
+}
+
+func TestAPIProjectReturnsServiceUnavailableWithoutService(t *testing.T) {
+	srv := webadapter.NewServer(nil)
+	res := serve(t, srv, http.MethodGet, "/api/project", nil)
+	if res.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d body=%s", res.Code, res.Body.String())
+	}
+	assertAPIErrorCode(t, res, "service_unavailable")
 }
 
 func testService(t *testing.T) *service.Service {

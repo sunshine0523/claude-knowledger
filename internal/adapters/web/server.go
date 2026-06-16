@@ -22,6 +22,8 @@ type webService interface {
 	CreateKnowledgeBase(context.Context, service.CreateKnowledgeBaseInput) (registry.KnowledgeBaseRecord, error)
 	DeleteKnowledgeBase(context.Context, string, string) error
 	Search(context.Context, core.SearchOptions) (service.SearchResult, error)
+	HasProjectScope() bool
+	ProjectRoot() string
 }
 
 type Server struct {
@@ -133,6 +135,11 @@ type dashboardReadiness struct {
 	Notes                    []string `json:"notes"`
 }
 
+type projectView struct {
+	InProject   bool   `json:"in_project"`
+	ProjectRoot string `json:"project_root"`
+}
+
 func NewServer(svc any) *Server {
 	tmpl := template.Must(parseTemplates())
 	mux := http.NewServeMux()
@@ -152,6 +159,7 @@ func NewServer(svc any) *Server {
 	mux.HandleFunc("DELETE /api/kbs/{id}/items/{item_id}", s.apiDeleteKnowledgeItem)
 	mux.HandleFunc("POST /api/search", s.apiSearch)
 	mux.HandleFunc("GET /api/dashboard", s.apiDashboard)
+	mux.HandleFunc("GET /api/project", s.apiProject)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(webassets.StaticFS()))))
 	return s
 }
@@ -390,6 +398,16 @@ func (s *Server) apiDashboard(w http.ResponseWriter, r *http.Request) {
 			Message: "Recent indexing failures are not exposed by the web dashboard yet.",
 		},
 	})
+}
+
+func (s *Server) apiProject(w http.ResponseWriter, r *http.Request) {
+	_ = r
+	if s.svc == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "service_unavailable", "knowledge base service is unavailable")
+		return
+	}
+	view := projectView{InProject: s.svc.HasProjectScope(), ProjectRoot: s.svc.ProjectRoot()}
+	writeAPISuccess(w, http.StatusOK, view)
 }
 
 func recordsToViews(records []registry.KnowledgeBaseRecord) []kbView {
