@@ -31,6 +31,7 @@ func New(static []config.KnowledgeBaseConfig, store Store) *Registry {
 func staticToCore(item config.KnowledgeBaseConfig) core.KnowledgeBase {
 	return core.KnowledgeBase{
 		ID:                item.ID,
+		Scope:             core.ScopeGlobal,
 		Name:              item.Name,
 		StoreType:         item.StoreType,
 		StoreConfig:       item.StoreConfig,
@@ -41,9 +42,10 @@ func staticToCore(item config.KnowledgeBaseConfig) core.KnowledgeBase {
 	}
 }
 
-func runtimeToCore(item RuntimeKnowledgeBase) core.KnowledgeBase {
+func runtimeToCore(item RuntimeKnowledgeBase, scope string) core.KnowledgeBase {
 	return core.KnowledgeBase{
 		ID:                item.ID,
+		Scope:             scope,
 		Name:              item.Name,
 		StoreType:         item.StoreType,
 		StoreConfig:       item.StoreConfig,
@@ -78,7 +80,7 @@ func (r *Registry) ListWithSources() ([]KnowledgeBaseRecord, error) {
 		merged[item.ID] = KnowledgeBaseRecord{KnowledgeBase: kb, Source: SourceStatic, Deletable: false}
 	}
 	for _, item := range runtimeItems {
-		kb := runtimeToCore(item)
+		kb := runtimeToCore(item, core.ScopeGlobal)
 		merged[item.ID] = KnowledgeBaseRecord{KnowledgeBase: kb, Source: SourceRuntime, Deletable: true}
 	}
 

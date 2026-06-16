@@ -64,6 +64,11 @@ type Service struct {
 var knowledgeBaseIDPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
 func New(kbs []core.KnowledgeBase, backends map[string]core.StoreBackend) *Service {
+	for i := range kbs {
+		if kbs[i].Scope == "" {
+			kbs[i].Scope = core.ScopeGlobal
+		}
+	}
 	return &Service{knowledgeBases: kbs, backends: backends}
 }
 
@@ -315,6 +320,11 @@ func (s *Service) Reload() error {
 	if err != nil {
 		return err
 	}
+	for i := range kbs {
+		if kbs[i].Scope == "" {
+			kbs[i].Scope = core.ScopeGlobal
+		}
+	}
 	backends, err := s.buildBackends(kbs)
 	if err != nil {
 		return err
@@ -447,6 +457,7 @@ func normalizeCreateInput(input CreateKnowledgeBaseInput) (registry.RuntimeKnowl
 func runtimeToCore(item registry.RuntimeKnowledgeBase) core.KnowledgeBase {
 	return core.KnowledgeBase{
 		ID:                item.ID,
+		Scope:             core.ScopeGlobal,
 		Name:              item.Name,
 		StoreType:         item.StoreType,
 		StoreConfig:       item.StoreConfig,
