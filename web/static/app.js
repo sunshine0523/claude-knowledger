@@ -118,6 +118,7 @@ const translations = {
     "search.backend": "Backend",
     "search.locator": "Locator",
     "search.snippet": "Snippet",
+    "search.scopeAll": "All",
     "debug.title": "MCP / CLI Debug",
     "debug.description": "View debug requests, responses, warnings, and errors."
   },
@@ -217,6 +218,7 @@ const translations = {
     "search.backend": "后端",
     "search.locator": "位置",
     "search.snippet": "片段",
+    "search.scopeAll": "全部",
     "debug.title": "MCP / CLI 调试",
     "debug.description": "查看调试请求、响应、warning 和 error。"
   }
@@ -623,12 +625,20 @@ function setupSearchLab(form) {
 function searchPayloadFromForm(form) {
   const data = new FormData(form);
   const limitValue = data.get("limit");
-  return {
+  const scope = (data.get("scope") || "").toString().trim();
+  const payload = {
     query: data.get("query") || "",
     limit: limitValue === "" ? undefined : Number(limitValue),
     kb_ids: tagsFromInput(data.get("kb_ids") || ""),
     search_mode: data.get("search_mode") || ""
   };
+  if (scope) payload.scope = scope;
+  return payload;
+}
+
+function currentScopeFilter() {
+  const checked = document.querySelector('input[name="scope"]:checked');
+  return checked ? (checked.value || "") : "";
 }
 
 function resetSearchResults(message) {
@@ -647,7 +657,12 @@ function resetSearchResults(message) {
 
 function renderSearchResults(payload) {
   const data = payload.data || {};
-  const hits = data.hits || [];
+  const allHits = data.hits || [];
+  // Scope on the request body acts as the *default* for bare-id kb_ids on the
+  // server. To make the radio actually narrow the visible result set, treat it
+  // as a post-filter on the rendered hits.
+  const scopeFilter = currentScopeFilter();
+  const hits = scopeFilter ? allHits.filter((hit) => (hit.scope || "global") === scopeFilter) : allHits;
   renderSearchSummary(data, payload.meta || {});
   renderSearchWarnings(payload.warnings || []);
 
@@ -664,6 +679,7 @@ function renderSearchResults(payload) {
     const row = document.createElement("tr");
     appendTextCell(row, hit.title, false);
     appendTextCell(row, hit.kb_id, true);
+    appendScopeCell(row, hit.scope);
     appendTextCell(row, formatScore(hit.score), false);
     appendTextCell(row, hit.match_mode, false);
     appendTextCell(row, hit.source_backend, false);

@@ -26,6 +26,12 @@
               <option value="hybrid">hybrid</option>
             </select>
           </label>
+          <fieldset class="search-scope-filter">
+            <legend data-i18n="common.scope">Scope</legend>
+            <label><input type="radio" name="scope" value="" checked> <span data-i18n="search.scopeAll">All</span></label>
+            <label><input type="radio" name="scope" value="project"> <span data-i18n="kbs.scopeProject">Project</span></label>
+            <label><input type="radio" name="scope" value="global"> <span data-i18n="kbs.scopeGlobal">Global</span></label>
+          </fieldset>
           <button id="search-submit" type="submit" data-i18n="search.submit">Search</button>
         </form>
       </section>
@@ -53,6 +59,7 @@
               <tr>
                 <th data-i18n="common.title">Title</th>
                 <th data-i18n="search.kb">KB</th>
+                <th data-i18n="common.scope">Scope</th>
                 <th data-i18n="search.score">Score</th>
                 <th data-i18n="search.matchMode">Match Mode</th>
                 <th data-i18n="search.backend">Backend</th>
