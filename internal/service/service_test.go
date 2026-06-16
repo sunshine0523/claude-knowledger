@@ -1124,3 +1124,25 @@ func TestServiceHasProjectScope(t *testing.T) {
 		t.Fatalf("expected HasProjectScope=true")
 	}
 }
+
+func TestServiceProjectRoot(t *testing.T) {
+	regNo := registry.New(nil, registry.NewMemoryStore(nil), nil, "")
+	regYes := registry.New(nil, registry.NewMemoryStore(nil), registry.NewMemoryStore(nil), "/tmp/proj")
+	build := func(kbs []core.KnowledgeBase) (map[string]core.StoreBackend, error) {
+		return map[string]core.StoreBackend{}, nil
+	}
+	svcNo, err := service.NewManaged(regNo, build)
+	if err != nil {
+		t.Fatalf("NewManaged regNo: %v", err)
+	}
+	svcYes, err := service.NewManaged(regYes, build)
+	if err != nil {
+		t.Fatalf("NewManaged regYes: %v", err)
+	}
+	if svcNo.ProjectRoot() != "" {
+		t.Fatalf("expected empty project root, got %q", svcNo.ProjectRoot())
+	}
+	if svcYes.ProjectRoot() != "/tmp/proj" {
+		t.Fatalf("expected /tmp/proj, got %q", svcYes.ProjectRoot())
+	}
+}

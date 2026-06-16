@@ -48,6 +48,10 @@ func (r *Registry) HasProjectStore() bool {
 	return r.projectStore != nil
 }
 
+func (r *Registry) ProjectRoot() string {
+	return r.projectRoot
+}
+
 func staticToCore(item config.KnowledgeBaseConfig) core.KnowledgeBase {
 	return core.KnowledgeBase{
 		ID:                item.ID,

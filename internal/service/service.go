@@ -339,6 +339,13 @@ func (s *Service) HasProjectScope() bool {
 	return s.registry.HasProjectStore()
 }
 
+func (s *Service) ProjectRoot() string {
+	if s.registry == nil {
+		return ""
+	}
+	return s.registry.ProjectRoot()
+}
+
 func (s *Service) Reload() error {
 	if s.registry == nil || s.buildBackends == nil {
 		return nil
