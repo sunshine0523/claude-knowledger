@@ -3,10 +3,14 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/kindbrave/knowledger/internal/adapters/cli"
+	"github.com/kindbrave/knowledger/internal/app"
+	"github.com/kindbrave/knowledger/internal/config"
 	"github.com/kindbrave/knowledger/internal/core"
 	"github.com/kindbrave/knowledger/internal/service"
 )
@@ -40,6 +44,7 @@ func TestAddCommandShowsEmbeddedChromaInitializationHint(t *testing.T) {
 	stdout := new(bytes.Buffer)
 	svc := service.New([]core.KnowledgeBase{{
 		ID:        "notes",
+		Scope:     core.ScopeGlobal,
 		StoreType: "sqlite",
 		Enabled:   true,
 		Indexing: map[string]any{"semantic": map[string]any{
@@ -60,5 +65,29 @@ func TestAddCommandShowsEmbeddedChromaInitializationHint(t *testing.T) {
 
 	if !strings.Contains(stderr.String(), "Embedded Chroma semantic indexing may download runtime/model files on first use") {
 		t.Fatalf("expected embedded Chroma initialization hint on stderr, got %q", stderr.String())
+	}
+}
+
+func TestAddCommandResolvesProjectScopeByDefaultInProject(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, ".knowledger"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	cfg, err := config.Default()
+	if err != nil {
+		t.Fatalf("default config: %v", err)
+	}
+	cfg.RuntimeRegistryPath = filepath.Join(t.TempDir(), "global", "registry.json")
+	svc, err := app.BuildServiceFromConfig(cfg, tmp)
+	if err != nil {
+		t.Fatalf("BuildServiceFromConfig: %v", err)
+	}
+	defer svc.Close()
+	got, err := cli.EffectiveScope("", svc.HasProjectScope())
+	if err != nil {
+		t.Fatalf("EffectiveScope: %v", err)
+	}
+	if got != core.ScopeProject {
+		t.Fatalf("expected project scope, got %q", got)
 	}
 }

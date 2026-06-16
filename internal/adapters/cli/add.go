@@ -16,10 +16,14 @@ func newAddCommand(svc *service.Service) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "add",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if showsEmbeddedChromaHint(svc, kbID) {
+			scope, err := EffectiveScope(ScopeFlagValue(), svc != nil && svc.HasProjectScope())
+			if err != nil {
+				return err
+			}
+			if showsEmbeddedChromaHint(svc, scope, kbID) {
 				fmt.Fprintln(cmd.ErrOrStderr(), "Embedded Chroma semantic indexing may download runtime/model files on first use; this can take a few minutes.")
 			}
-			item, ingest, status, err := svc.Add(context.Background(), core.AddInput{KBID: kbID, Scope: core.ScopeGlobal, Title: title, Content: content})
+			item, ingest, status, err := svc.Add(context.Background(), core.AddInput{KBID: kbID, Scope: scope, Title: title, Content: content})
 			if err != nil {
 				return err
 			}
@@ -32,12 +36,12 @@ func newAddCommand(svc *service.Service) *cobra.Command {
 	return cmd
 }
 
-func showsEmbeddedChromaHint(svc *service.Service, kbID string) bool {
+func showsEmbeddedChromaHint(svc *service.Service, scope, kbID string) bool {
 	if svc == nil {
 		return false
 	}
 	for _, kb := range svc.ListKnowledgeBases() {
-		if kb.ID != kbID {
+		if kb.ID != kbID || kb.Scope != scope {
 			continue
 		}
 		semantic, ok := kb.Indexing["semantic"].(map[string]any)
