@@ -80,6 +80,7 @@ type kbsPageData struct {
 
 type createKBRequest struct {
 	ID              string   `json:"id"`
+	Scope           string   `json:"scope"`
 	Name            string   `json:"name"`
 	StoreType       string   `json:"store_type"`
 	Path            string   `json:"path"`
@@ -229,7 +230,16 @@ func (s *Server) apiCreateKB(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
 		return
 	}
+	scope := strings.TrimSpace(req.Scope)
+	if scope == "" {
+		if s.svc.HasProjectScope() {
+			scope = core.ScopeProject
+		} else {
+			scope = core.ScopeGlobal
+		}
+	}
 	record, err := s.svc.CreateKnowledgeBase(r.Context(), service.CreateKnowledgeBaseInput{
+		Scope:           scope,
 		ID:              req.ID,
 		Name:            req.Name,
 		StoreType:       req.StoreType,

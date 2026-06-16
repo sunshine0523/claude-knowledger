@@ -107,7 +107,7 @@ func (f *fakeWebService) DeleteKnowledgeItem(_ context.Context, _ string, kbID s
 
 func (f *fakeWebService) CreateKnowledgeBase(_ context.Context, input service.CreateKnowledgeBaseInput) (registry.KnowledgeBaseRecord, error) {
 	f.lastCreate = input
-	return registry.KnowledgeBaseRecord{KnowledgeBase: core.KnowledgeBase{ID: input.ID, Name: input.Name, StoreType: input.StoreType, StoreConfig: map[string]any{"path": input.Path}, Enabled: true}, Source: registry.SourceRuntime, Deletable: true}, nil
+	return registry.KnowledgeBaseRecord{KnowledgeBase: core.KnowledgeBase{ID: input.ID, Scope: input.Scope, Name: input.Name, StoreType: input.StoreType, StoreConfig: map[string]any{"path": input.Path}, Enabled: true}, Source: registry.SourceRuntime, Deletable: true}, nil
 }
 
 func (f *fakeWebService) DeleteKnowledgeBase(context.Context, string, string) error {
@@ -650,6 +650,45 @@ func TestAPICreatePassesSemanticEnabled(t *testing.T) {
 	}
 	if fake.lastCreate.SemanticEnabled == nil || *fake.lastCreate.SemanticEnabled != false {
 		t.Fatalf("expected semantic_enabled=false to be passed through, got %#v", fake.lastCreate.SemanticEnabled)
+	}
+}
+
+func TestAPICreateKBExplicitScope(t *testing.T) {
+	fake := &fakeWebService{}
+	srv := webadapter.NewServer(fake)
+	body := []byte(`{"id":"notes","scope":"project","store_type":"text","path":"./data"}`)
+	res := serve(t, srv, http.MethodPost, "/api/kbs", body)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d body=%s", res.Code, res.Body.String())
+	}
+	if fake.lastCreate.Scope != core.ScopeProject {
+		t.Fatalf("expected scope=project, got %q", fake.lastCreate.Scope)
+	}
+}
+
+func TestAPICreateKBDefaultsToProjectInProjectMode(t *testing.T) {
+	fake := &fakeWebService{hasProjectScope: true, projectRoot: "/tmp/proj"}
+	srv := webadapter.NewServer(fake)
+	body := []byte(`{"id":"notes","store_type":"text","path":"./data"}`)
+	res := serve(t, srv, http.MethodPost, "/api/kbs", body)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d body=%s", res.Code, res.Body.String())
+	}
+	if fake.lastCreate.Scope != core.ScopeProject {
+		t.Fatalf("expected scope=project (default in project mode), got %q", fake.lastCreate.Scope)
+	}
+}
+
+func TestAPICreateKBDefaultsToGlobalOutsideProject(t *testing.T) {
+	fake := &fakeWebService{}
+	srv := webadapter.NewServer(fake)
+	body := []byte(`{"id":"notes","store_type":"text","path":"./data"}`)
+	res := serve(t, srv, http.MethodPost, "/api/kbs", body)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d body=%s", res.Code, res.Body.String())
+	}
+	if fake.lastCreate.Scope != core.ScopeGlobal {
+		t.Fatalf("expected scope=global (default outside project), got %q", fake.lastCreate.Scope)
 	}
 }
 
