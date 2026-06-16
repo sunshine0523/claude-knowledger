@@ -2,6 +2,7 @@ package app
 
 import (
 	"io"
+	"path/filepath"
 
 	"github.com/kindbrave/knowledger/internal/adapters/cli"
 	mcpadapter "github.com/kindbrave/knowledger/internal/adapters/mcp"
@@ -10,6 +11,7 @@ import (
 	"github.com/kindbrave/knowledger/internal/config"
 	"github.com/kindbrave/knowledger/internal/core"
 	"github.com/kindbrave/knowledger/internal/install/claude"
+	"github.com/kindbrave/knowledger/internal/projectroot"
 	"github.com/kindbrave/knowledger/internal/registry"
 	"github.com/kindbrave/knowledger/internal/service"
 )
@@ -46,7 +48,8 @@ func Run(configPath string, args []string) error {
 	if err != nil {
 		return err
 	}
-	return RunWithConfig(cfg, args)
+	projectRoot, _, _ := projectroot.Discover()
+	return RunWithConfig(cfg, projectRoot, args)
 }
 
 func RunDefault(args []string) error {
@@ -57,17 +60,18 @@ func RunDefault(args []string) error {
 	if err != nil {
 		return err
 	}
-	return RunWithConfig(cfg, args)
+	projectRoot, _, _ := projectroot.Discover()
+	return RunWithConfig(cfg, projectRoot, args)
 }
 
-func RunWithConfig(cfg config.Config, args []string) error {
+func RunWithConfig(cfg config.Config, projectRoot string, args []string) error {
 	if isInstallCommand(args) {
 		return runService(nil, config.DefaultServerAddress, args)
 	}
 	if err := config.ApplyDefaults(&cfg); err != nil {
 		return err
 	}
-	svc, err := BuildServiceFromConfig(cfg)
+	svc, err := BuildServiceFromConfig(cfg, projectRoot)
 	if err != nil {
 		return err
 	}
@@ -75,27 +79,32 @@ func RunWithConfig(cfg config.Config, args []string) error {
 	return runService(svc, cfg.Server.Address, args)
 }
 
-func BuildService(configPath string) (*service.Service, error) {
+func BuildService(configPath, projectRoot string) (*service.Service, error) {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return nil, err
 	}
-	return BuildServiceFromConfig(cfg)
+	return BuildServiceFromConfig(cfg, projectRoot)
 }
 
-func BuildDefaultService() (*service.Service, error) {
+func BuildDefaultService(projectRoot string) (*service.Service, error) {
 	cfg, err := config.Default()
 	if err != nil {
 		return nil, err
 	}
-	return BuildServiceFromConfig(cfg)
+	return BuildServiceFromConfig(cfg, projectRoot)
 }
 
-func BuildServiceFromConfig(cfg config.Config) (*service.Service, error) {
+func BuildServiceFromConfig(cfg config.Config, projectRoot string) (*service.Service, error) {
 	if err := config.ApplyDefaults(&cfg); err != nil {
 		return nil, err
 	}
-	r := registry.New(cfg.KnowledgeBases, registry.NewFileStore(cfg.RuntimeRegistryPath), nil, "")
+	globalStore := registry.NewFileStore(cfg.RuntimeRegistryPath)
+	var projectStore registry.Store
+	if projectRoot != "" {
+		projectStore = registry.NewFileStore(filepath.Join(projectRoot, projectroot.MarkerDirName, "registry.json"))
+	}
+	r := registry.New(cfg.KnowledgeBases, globalStore, projectStore, projectRoot)
 	return service.NewManaged(r, buildBackends)
 }
 

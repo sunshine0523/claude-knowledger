@@ -22,7 +22,7 @@ func TestBuildServiceUsesDefaultSQLiteKnowledgeBase(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	svc, err := app.BuildService(configPath)
+	svc, err := app.BuildService(configPath, "")
 	if err != nil {
 		t.Fatalf("BuildService returned error: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestBuildServiceUsesDefaultSQLiteKnowledgeBase(t *testing.T) {
 		StoreConfig: map[string]any{"path": dbPath},
 		Enabled:     true,
 		Indexing:    map[string]any{"semantic": map[string]any{"enabled": false}},
-	}}})
+	}}}, "")
 	if err != nil {
 		t.Fatalf("BuildServiceFromConfig returned error: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestBuildDefaultService(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	svc, err := app.BuildDefaultService()
+	svc, err := app.BuildDefaultService("")
 	if err != nil {
 		t.Fatalf("BuildDefaultService returned error: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestBuildServiceLoadsPersistedRuntimeKnowledgeBases(t *testing.T) {
 		t.Fatalf("Save runtime registry: %v", err)
 	}
 
-	svc, err := app.BuildServiceFromConfig(config.Config{RuntimeRegistryPath: runtimePath, KnowledgeBases: []config.KnowledgeBaseConfig{{ID: "default", StoreType: "sqlite", Enabled: true, StoreConfig: map[string]any{"path": filepath.Join(t.TempDir(), "db")}}}})
+	svc, err := app.BuildServiceFromConfig(config.Config{RuntimeRegistryPath: runtimePath, KnowledgeBases: []config.KnowledgeBaseConfig{{ID: "default", StoreType: "sqlite", Enabled: true, StoreConfig: map[string]any{"path": filepath.Join(t.TempDir(), "db")}}}}, "")
 	if err != nil {
 		t.Fatalf("BuildServiceFromConfig returned error: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestBuildServiceAllowsMultipleSQLitePaths(t *testing.T) {
 		{ID: "two", StoreType: "sqlite", Enabled: true, StoreConfig: map[string]any{"path": twoPath}, Indexing: map[string]any{"semantic": map[string]any{"enabled": false}}},
 	}}
 
-	svc, err := app.BuildServiceFromConfig(cfg)
+	svc, err := app.BuildServiceFromConfig(cfg, "")
 	if err != nil {
 		t.Fatalf("BuildServiceFromConfig returned error: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestRunWithConfigInstallClaudeDoesNotBuildDefaultService(t *testing.T) {
 	})
 	defer restore()
 
-	if err := app.RunWithConfig(config.Config{}, []string{"install", "--claude"}); err != nil {
+	if err := app.RunWithConfig(config.Config{}, "", []string{"install", "--claude"}); err != nil {
 		t.Fatalf("RunWithConfig returned error: %v", err)
 	}
 	if called != 1 {
@@ -233,5 +233,42 @@ func TestRunWithConfigInstallClaudeDoesNotBuildDefaultService(t *testing.T) {
 			t.Fatalf("expected default sqlite storage not to be created at %s", dbPath)
 		}
 		t.Fatalf("stat default sqlite storage: %v", err)
+	}
+}
+
+func TestBuildServiceFromConfigCreatesProjectStoreWhenRootProvided(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, ".knowledger"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	cfg, err := config.Default()
+	if err != nil {
+		t.Fatalf("default config: %v", err)
+	}
+	cfg.RuntimeRegistryPath = filepath.Join(t.TempDir(), "global", "registry.json")
+
+	svc, err := app.BuildServiceFromConfig(cfg, tmp)
+	if err != nil {
+		t.Fatalf("BuildServiceFromConfig: %v", err)
+	}
+	defer svc.Close()
+	if !svc.HasProjectScope() {
+		t.Fatalf("expected HasProjectScope=true when projectRoot is set")
+	}
+}
+
+func TestBuildServiceFromConfigOmitsProjectStoreWhenRootEmpty(t *testing.T) {
+	cfg, err := config.Default()
+	if err != nil {
+		t.Fatalf("default config: %v", err)
+	}
+	cfg.RuntimeRegistryPath = filepath.Join(t.TempDir(), "global", "registry.json")
+	svc, err := app.BuildServiceFromConfig(cfg, "")
+	if err != nil {
+		t.Fatalf("BuildServiceFromConfig: %v", err)
+	}
+	defer svc.Close()
+	if svc.HasProjectScope() {
+		t.Fatalf("expected HasProjectScope=false when projectRoot is empty")
 	}
 }
