@@ -26,12 +26,14 @@ type KnowledgeBaseSummary struct {
 }
 
 type IndexKnowledgeInput struct {
+	Scope   string
 	KBID    string
 	Rebuild bool
 }
 
 type KnowledgeBaseIndexResult struct {
 	KBID      string           `json:"kb_id"`
+	Scope     string           `json:"scope"`
 	StoreType string           `json:"store_type"`
 	Result    core.IndexResult `json:"result"`
 }
@@ -136,9 +138,20 @@ func (s *Service) Add(ctx context.Context, input core.AddInput) (core.KnowledgeI
 func (s *Service) IndexKnowledge(ctx context.Context, input IndexKnowledgeInput) (IndexKnowledgeResult, error) {
 	kbs, backends := s.snapshot()
 	kbID := strings.TrimSpace(input.KBID)
+	scopeFilter := strings.TrimSpace(input.Scope)
+	if scopeFilter != "" {
+		var err error
+		scopeFilter, err = core.NormalizeScope(scopeFilter)
+		if err != nil {
+			return IndexKnowledgeResult{}, &core.Error{Kind: core.ErrorKindConfig, Message: err.Error()}
+		}
+	}
 	result := IndexKnowledgeResult{}
 	matched := false
 	for _, kb := range kbs {
+		if scopeFilter != "" && kb.Scope != scopeFilter {
+			continue
+		}
 		if kbID != "" && kb.ID != kbID {
 			continue
 		}
@@ -153,7 +166,7 @@ func (s *Service) IndexKnowledge(ctx context.Context, input IndexKnowledgeInput)
 		maintainer, ok := backend.(core.IndexMaintainer)
 		if !ok {
 			indexResult := core.IndexResult{Skipped: 1, Warnings: []string{fmt.Sprintf("%s: index maintenance is not supported for %s backend", kb.ID, kb.StoreType)}}
-			result.Results = append(result.Results, KnowledgeBaseIndexResult{KBID: kb.ID, StoreType: kb.StoreType, Result: indexResult})
+			result.Results = append(result.Results, KnowledgeBaseIndexResult{KBID: kb.ID, Scope: kb.Scope, StoreType: kb.StoreType, Result: indexResult})
 			result.Warnings = append(result.Warnings, indexResult.Warnings...)
 			continue
 		}
@@ -161,7 +174,7 @@ func (s *Service) IndexKnowledge(ctx context.Context, input IndexKnowledgeInput)
 		if err != nil {
 			return result, err
 		}
-		result.Results = append(result.Results, KnowledgeBaseIndexResult{KBID: kb.ID, StoreType: kb.StoreType, Result: indexResult})
+		result.Results = append(result.Results, KnowledgeBaseIndexResult{KBID: kb.ID, Scope: kb.Scope, StoreType: kb.StoreType, Result: indexResult})
 		result.Warnings = append(result.Warnings, indexResult.Warnings...)
 	}
 	if kbID != "" && !matched {

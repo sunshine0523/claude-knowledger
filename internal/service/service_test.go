@@ -1021,3 +1021,38 @@ func TestServiceSearchEmptyFilterIncludesAllScopes(t *testing.T) {
 		t.Fatalf("expected hits across both scopes, got %#v", gotScopes)
 	}
 }
+
+type fakeIndexBackend struct {
+	scopeAwareFakeBackend
+	maintain func(context.Context, core.KnowledgeBase, core.IndexOptions) (core.IndexResult, error)
+}
+
+func (f *fakeIndexBackend) MaintainIndex(ctx context.Context, kb core.KnowledgeBase, opt core.IndexOptions) (core.IndexResult, error) {
+	if f.maintain != nil {
+		return f.maintain(ctx, kb, opt)
+	}
+	return core.IndexResult{}, nil
+}
+
+func TestServiceIndexKnowledgeRoutesByScope(t *testing.T) {
+	calls := []core.KnowledgeBase{}
+	backend := &fakeIndexBackend{
+		maintain: func(_ context.Context, kb core.KnowledgeBase, _ core.IndexOptions) (core.IndexResult, error) {
+			calls = append(calls, kb)
+			return core.IndexResult{Indexed: 1}, nil
+		},
+	}
+	svc := service.New(
+		[]core.KnowledgeBase{
+			{ID: "notes", Scope: core.ScopeGlobal, StoreType: "text", Enabled: true},
+			{ID: "notes", Scope: core.ScopeProject, StoreType: "text", Enabled: true},
+		},
+		map[string]core.StoreBackend{"text": backend},
+	)
+	if _, err := svc.IndexKnowledge(context.Background(), service.IndexKnowledgeInput{Scope: core.ScopeProject, KBID: "notes"}); err != nil {
+		t.Fatalf("IndexKnowledge: %v", err)
+	}
+	if len(calls) != 1 || calls[0].Scope != core.ScopeProject {
+		t.Fatalf("expected one MaintainIndex call to project notes, got %#v", calls)
+	}
+}
