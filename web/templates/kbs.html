@@ -56,6 +56,7 @@
               <tr>
                 <th data-i18n="common.id">ID</th>
                 <th data-i18n="common.name">Name</th>
+                <th data-i18n="common.scope">Scope</th>
                 <th data-i18n="common.type">Type</th>
                 <th data-i18n="common.path">Path</th>
                 <th data-i18n="common.enabled">Enabled</th>
@@ -67,9 +68,10 @@
             </thead>
             <tbody id="kb-table-body">
               {{ range .KnowledgeBases }}
-              <tr data-kb-id="{{ .ID }}" data-kb-source="{{ .Source }}">
+              <tr data-kb-id="{{ .ID }}" data-kb-scope="{{ .Scope }}" data-kb-source="{{ .Source }}">
                 <td><code>{{ .ID }}</code></td>
                 <td>{{ .Name }}</td>
+                <td><span class="scope-badge scope-{{ .Scope }}">{{ .Scope }}</span></td>
                 <td>{{ .StoreType }}</td>
                 <td><code>{{ .Path }}</code></td>
                 <td>{{ .Enabled }}</td>
@@ -78,7 +80,7 @@
                 <td>{{ .ItemCount }}</td>
                 <td>
                   {{ if .Deletable }}
-                  <button type="button" class="danger kb-delete" data-kb-id="{{ .ID }}" data-i18n="common.delete">Delete</button>
+                  <button type="button" class="danger kb-delete" data-kb-id="{{ .ID }}" data-kb-scope="{{ .Scope }}" data-i18n="common.delete">Delete</button>
                   {{ else }}
                   <button type="button" disabled title="Static knowledge bases are read-only in Web" data-i18n="kbs.static">Static</button>
                   {{ end }}

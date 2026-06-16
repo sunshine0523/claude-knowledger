@@ -420,15 +420,25 @@ function applyProjectModeBanner() {
   }
 }
 
-async function deleteKB(id) {
+async function deleteKB(scope, id) {
   if (!window.confirm(t("kbs.deleteConfirm", { id }))) return;
   try {
-    await apiDelete(`/api/kbs/${encodeURIComponent(id)}`);
+    await apiDelete(`/api/kbs/${encodeURIComponent(scope)}/${encodeURIComponent(id)}`);
     showKBMessage(t("kbs.deleted"), false);
     await refreshKBPage();
   } catch (error) {
     showKBMessage(error.message, true);
   }
+}
+
+function appendScopeCell(row, scope) {
+  const cell = document.createElement("td");
+  const value = scope || "global";
+  const span = document.createElement("span");
+  span.className = `scope-badge scope-${value}`;
+  span.textContent = value;
+  cell.appendChild(span);
+  row.appendChild(cell);
 }
 
 function renderKBs(rows) {
@@ -441,9 +451,11 @@ function renderKBs(rows) {
   rows.forEach((kb) => {
     const row = document.createElement("tr");
     row.dataset.kbId = kb.id;
+    row.dataset.kbScope = kb.scope || "global";
     row.dataset.kbSource = kb.source;
     appendTextCell(row, kb.id, true);
     appendTextCell(row, kb.name, false);
+    appendScopeCell(row, kb.scope);
     appendTextCell(row, kb.store_type, false);
     appendTextCell(row, kb.path, true);
     appendTextCell(row, formatBoolean(kb.enabled), false);
@@ -457,8 +469,9 @@ function renderKBs(rows) {
     if (kb.deletable) {
       button.className = "danger kb-delete";
       button.dataset.kbId = kb.id;
+      button.dataset.kbScope = kb.scope || "global";
       button.textContent = t("common.delete");
-      button.addEventListener("click", () => deleteKB(kb.id));
+      button.addEventListener("click", () => deleteKB(kb.scope || "global", kb.id));
     } else {
       button.disabled = true;
       button.title = "Static knowledge bases are read-only in Web";
@@ -542,6 +555,7 @@ function renderDashboardKnowledgeBases(rows) {
     const row = document.createElement("tr");
     appendTextCell(row, kb.id, true);
     appendTextCell(row, kb.name, false);
+    appendScopeCell(row, kb.scope);
     appendTextCell(row, kb.store_type, false);
     appendTextCell(row, kb.path, true);
     appendTextCell(row, formatBoolean(kb.enabled), false);
@@ -742,19 +756,33 @@ function renderKnowledgeKBOptions(kbs) {
   }
   kbs.forEach((kb) => {
     const option = document.createElement("option");
-    option.value = kb.id;
-    option.textContent = `${kb.name || kb.id} (${kb.id})`;
+    const scope = kb.scope || "global";
+    option.value = `${scope}:${kb.id}`;
+    option.dataset.scope = scope;
+    option.dataset.kbId = kb.id;
+    option.textContent = `${kb.name || kb.id} (${scope}/${kb.id})`;
     select.appendChild(option);
   });
 }
 
-async function loadSelectedKnowledgeItems() {
+function selectedKnowledgeKBRef() {
   const select = document.querySelector("#knowledge-kb-select");
-  if (!select || !select.value) return;
+  if (!select) return null;
+  const option = select.selectedOptions && select.selectedOptions[0];
+  if (!option || !option.value) return null;
+  const scope = option.dataset.scope;
+  const kbId = option.dataset.kbId;
+  if (!scope || !kbId) return null;
+  return { scope, kbId };
+}
+
+async function loadSelectedKnowledgeItems() {
+  const ref = selectedKnowledgeKBRef();
+  if (!ref) return;
   const message = document.querySelector("#knowledge-message");
   try {
     hideMessage(message);
-    const payload = await apiGet(`/api/kbs/${encodeURIComponent(select.value)}/items`);
+    const payload = await apiGet(`/api/kbs/${encodeURIComponent(ref.scope)}/${encodeURIComponent(ref.kbId)}/items`);
     knowledgeItems = (payload.data && payload.data.items) || [];
     renderKnowledgeItems(knowledgeItems);
     clearKnowledgeContent();
@@ -815,11 +843,11 @@ function clearKnowledgeContent() {
 }
 
 async function deleteKnowledgeItem(item) {
-  const select = document.querySelector("#knowledge-kb-select");
-  if (!select || !select.value || !item || !item.id) return;
+  const ref = selectedKnowledgeKBRef();
+  if (!ref || !item || !item.id) return;
   if (!window.confirm(t("knowledge.deleteConfirm", { id: item.id }))) return;
   try {
-    await apiDelete(`/api/kbs/${encodeURIComponent(select.value)}/items/${encodeURIComponent(item.id)}`);
+    await apiDelete(`/api/kbs/${encodeURIComponent(ref.scope)}/${encodeURIComponent(ref.kbId)}/items/${encodeURIComponent(item.id)}`);
     showMessage(document.querySelector("#knowledge-message"), t("knowledge.deleted"), false);
     await loadSelectedKnowledgeItems();
   } catch (error) {
