@@ -3,6 +3,7 @@ package registry_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kindbrave/knowledger/internal/config"
@@ -272,5 +273,77 @@ func TestRegistryDeleteScopedRoutesCorrectly(t *testing.T) {
 	p, _ := projectStore.List()
 	if len(p) != 0 {
 		t.Fatalf("project store should be empty, got %#v", p)
+	}
+}
+
+func TestRegistryProjectKBDefaultsArePersistedAsRelativePaths(t *testing.T) {
+	projectStore := registry.NewMemoryStore(nil)
+	r := registry.New(nil, registry.NewMemoryStore(nil), projectStore, "/tmp/proj")
+
+	if err := r.Create(core.ScopeProject, registry.RuntimeKnowledgeBase{
+		ID:        "notes",
+		StoreType: "sqlite",
+		Enabled:   true,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	persisted, _ := projectStore.List()
+	if len(persisted) != 1 {
+		t.Fatalf("expected 1 persisted item, got %d", len(persisted))
+	}
+	got := persisted[0].StoreConfig["path"]
+	if got != ".knowledger/db" {
+		t.Fatalf("expected persisted path %q, got %q", ".knowledger/db", got)
+	}
+}
+
+func TestRegistryProjectKBResolvesRelativePathsOnList(t *testing.T) {
+	projectStore := registry.NewMemoryStore([]registry.RuntimeKnowledgeBase{{
+		ID:          "notes",
+		StoreType:   "sqlite",
+		StoreConfig: map[string]any{"path": ".knowledger/db"},
+		Enabled:     true,
+	}})
+	r := registry.New(nil, registry.NewMemoryStore(nil), projectStore, "/tmp/proj")
+
+	records, err := r.ListWithSources()
+	if err != nil {
+		t.Fatalf("ListWithSources: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(records))
+	}
+	got := records[0].KnowledgeBase.StoreConfig["path"]
+	if got != "/tmp/proj/.knowledger/db" {
+		t.Fatalf("expected resolved path %q, got %q", "/tmp/proj/.knowledger/db", got)
+	}
+	stored, _ := projectStore.List()
+	if stored[0].StoreConfig["path"] != ".knowledger/db" {
+		t.Fatalf("expected store to keep relative path, got %q", stored[0].StoreConfig["path"])
+	}
+}
+
+func TestRegistryProjectKBChromaCollectionPrefix(t *testing.T) {
+	projectStore := registry.NewMemoryStore(nil)
+	r := registry.New(nil, registry.NewMemoryStore(nil), projectStore, "/tmp/proj")
+
+	if err := r.Create(core.ScopeProject, registry.RuntimeKnowledgeBase{
+		ID:        "notes",
+		StoreType: "sqlite",
+		Enabled:   true,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	persisted, _ := projectStore.List()
+	semantic, _ := persisted[0].Indexing["semantic"].(map[string]any)
+	collection, _ := semantic["collection"].(string)
+
+	if !strings.HasPrefix(collection, "proj-") {
+		t.Fatalf("expected project KB chroma collection to be prefixed; got %q", collection)
+	}
+	if !strings.HasSuffix(collection, "-notes") {
+		t.Fatalf("expected project KB chroma collection to end with -<id>; got %q", collection)
 	}
 }
