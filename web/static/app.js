@@ -3,6 +3,24 @@ document.documentElement.dataset.knowledger = "ready";
 const LANG_KEY = "knowledger.lang";
 const DEFAULT_LANG = navigator.language && navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en";
 
+const projectMode = { inProject: false, projectRoot: "", loaded: false };
+
+async function loadProjectMode() {
+  try {
+    const res = await fetch("/api/project");
+    const json = await res.json();
+    if (json && json.success && json.data) {
+      projectMode.inProject = !!json.data.in_project;
+      projectMode.projectRoot = json.data.project_root || "";
+    }
+  } catch (_) {
+    // fallback: not in project mode
+  } finally {
+    projectMode.loaded = true;
+  }
+  return projectMode;
+}
+
 const translations = {
   en: {
     "nav.dashboard": "Dashboard",
@@ -20,6 +38,7 @@ const translations = {
     "common.name": "Name",
     "common.path": "Path",
     "common.refresh": "Refresh",
+    "common.scope": "Scope",
     "common.source": "Source",
     "common.status": "Status",
     "common.tags": "Tags",
@@ -46,6 +65,10 @@ const translations = {
     "kbs.description": "Manage knowledge base configuration, enabled state, and backend capability. Knowledge bases created in Web are written to the runtime registry; static configuration knowledge bases are read-only.",
     "kbs.addTitle": "Add knowledge base",
     "kbs.backend": "Backend",
+    "kbs.scopeAuto": "Auto (project if available, else global)",
+    "kbs.scopeProject": "Project",
+    "kbs.scopeGlobal": "Global",
+    "kbs.projectModeBanner": "Project mode: {root}",
     "kbs.storageLocation": "Storage Location",
     "kbs.addButton": "Add Knowledge Base",
     "kbs.pathHint": "text backend uses a directory path; sqlite backend uses a database path.",
@@ -114,6 +137,7 @@ const translations = {
     "common.name": "名称",
     "common.path": "路径",
     "common.refresh": "刷新",
+    "common.scope": "范围",
     "common.source": "来源",
     "common.status": "状态",
     "common.tags": "标签",
@@ -140,6 +164,10 @@ const translations = {
     "kbs.description": "管理知识库配置、启用状态和后端能力。Web 创建的知识库会写入运行时注册表；静态配置文件中的知识库只读展示。",
     "kbs.addTitle": "新增知识库",
     "kbs.backend": "后端",
+    "kbs.scopeAuto": "自动（有项目时为 project，否则为 global）",
+    "kbs.scopeProject": "项目",
+    "kbs.scopeGlobal": "全局",
+    "kbs.projectModeBanner": "项目模式：{root}",
     "kbs.storageLocation": "存储位置",
     "kbs.addButton": "添加知识库",
     "kbs.pathHint": "text 后端使用目录路径；sqlite 后端使用数据库路径。",
@@ -348,6 +376,7 @@ function setupCreateKBForm(form) {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const data = new FormData(form);
+    const scopeValue = (data.get("scope") || "").toString().trim();
     const payload = {
       id: data.get("id") || "",
       name: data.get("name") || "",
@@ -357,16 +386,38 @@ function setupCreateKBForm(form) {
       semantic_enabled: data.get("semantic_enabled") === "on",
       tags: tagsFromInput(data.get("tags") || "")
     };
+    if (scopeValue) payload.scope = scopeValue;
 
     try {
       await apiPost("/api/kbs", payload);
       showKBMessage(t("kbs.created"), false);
       form.reset();
+      applyProjectModeToKBForm();
       await refreshKBPage();
     } catch (error) {
       showKBMessage(error.message, true);
     }
   });
+}
+
+function applyProjectModeToKBForm() {
+  const sel = document.getElementById("kb-create-scope");
+  if (!sel) return;
+  if (projectMode.inProject) {
+    sel.value = "project";
+  }
+}
+
+function applyProjectModeBanner() {
+  const banner = document.getElementById("project-mode-banner");
+  if (!banner) return;
+  if (projectMode.inProject) {
+    banner.hidden = false;
+    banner.textContent = t("kbs.projectModeBanner", { root: projectMode.projectRoot });
+  } else {
+    banner.hidden = true;
+    banner.textContent = "";
+  }
 }
 
 async function deleteKB(id) {
@@ -429,6 +480,10 @@ function initKBPage() {
   const body = document.querySelector("#kb-table-body");
   if (!form && !body) return;
   if (form) setupCreateKBForm(form);
+  loadProjectMode().then(() => {
+    applyProjectModeBanner();
+    applyProjectModeToKBForm();
+  });
   refreshKBPage().catch((error) => showKBMessage(error.message, true));
 }
 

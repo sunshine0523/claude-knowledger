@@ -15,6 +15,7 @@
 
       {{ if .Error }}<p class="message error">{{ .Error }}</p>{{ end }}
       <p id="kb-message" class="message" hidden></p>
+      <p id="project-mode-banner" class="message info" hidden></p>
 
       <section class="panel">
         <h2 data-i18n="kbs.addTitle">新增知识库</h2>
@@ -25,6 +26,13 @@
             <select name="store_type" required>
               <option value="text">text</option>
               <option value="sqlite">sqlite</option>
+            </select>
+          </label>
+          <label><span data-i18n="common.scope">Scope</span>
+            <select id="kb-create-scope" name="scope">
+              <option value="" data-i18n="kbs.scopeAuto">Auto (project if available, else global)</option>
+              <option value="project" data-i18n="kbs.scopeProject">Project</option>
+              <option value="global" data-i18n="kbs.scopeGlobal">Global</option>
             </select>
           </label>
           <label><span data-i18n="kbs.storageLocation">Storage Location</span><input name="path" required placeholder="/path/to/docs-or-db"></label>
