@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/kindbrave/knowledger/internal/config"
+	"github.com/kindbrave/knowledger/internal/core"
 	"github.com/kindbrave/knowledger/internal/registry"
 )
 
@@ -181,5 +182,37 @@ func TestRegistryMergesStaticAndRuntimeKnowledgeBases(t *testing.T) {
 		if item.ID == "notes" && item.Enabled {
 			t.Fatalf("expected notes to be disabled")
 		}
+	}
+}
+
+func TestRegistryListWithSourcesMergesAcrossScopes(t *testing.T) {
+	static := []config.KnowledgeBaseConfig{{ID: "default", StoreType: "text", StoreConfig: map[string]any{"path": "./d"}, Enabled: true}}
+	globalStore := registry.NewMemoryStore([]registry.RuntimeKnowledgeBase{
+		{ID: "shared", Name: "Global Shared", StoreType: "text", StoreConfig: map[string]any{"path": "./g"}, Enabled: true},
+	})
+	projectStore := registry.NewMemoryStore([]registry.RuntimeKnowledgeBase{
+		{ID: "shared", Name: "Project Shared", StoreType: "text", StoreConfig: map[string]any{"path": "./p"}, Enabled: true},
+		{ID: "local", Name: "Local", StoreType: "text", StoreConfig: map[string]any{"path": "./local"}, Enabled: true},
+	})
+	r := registry.New(static, globalStore, projectStore, "/tmp/proj")
+
+	records, err := r.ListWithSources()
+	if err != nil {
+		t.Fatalf("ListWithSources: %v", err)
+	}
+	if len(records) != 4 {
+		t.Fatalf("expected 4 records (1 static, 1 global runtime, 2 project), got %d: %#v", len(records), records)
+	}
+	if records[0].KnowledgeBase.Scope != core.ScopeProject {
+		t.Fatalf("expected first record scope=project, got %q (id=%q)", records[0].KnowledgeBase.Scope, records[0].KnowledgeBase.ID)
+	}
+	scopesForShared := []string{}
+	for _, rec := range records {
+		if rec.KnowledgeBase.ID == "shared" {
+			scopesForShared = append(scopesForShared, rec.KnowledgeBase.Scope)
+		}
+	}
+	if len(scopesForShared) != 2 {
+		t.Fatalf("expected two `shared` records (project+global), got %v", scopesForShared)
 	}
 }

@@ -19,6 +19,11 @@ type KnowledgeBaseRecord struct {
 	Deletable     bool
 }
 
+type recordKey struct {
+	Scope string
+	ID    string
+}
+
 type Registry struct {
 	static       []config.KnowledgeBaseConfig
 	globalStore  Store
@@ -80,30 +85,47 @@ func (r *Registry) List() ([]core.KnowledgeBase, error) {
 }
 
 func (r *Registry) ListWithSources() ([]KnowledgeBaseRecord, error) {
-	runtimeItems, err := r.globalStore.List()
+	merged := map[recordKey]KnowledgeBaseRecord{}
+
+	for _, item := range r.static {
+		key := recordKey{Scope: core.ScopeGlobal, ID: item.ID}
+		merged[key] = KnowledgeBaseRecord{KnowledgeBase: staticToCore(item), Source: SourceStatic, Deletable: false}
+	}
+
+	globalRuntime, err := r.globalStore.List()
 	if err != nil {
 		return nil, err
 	}
-
-	merged := map[string]KnowledgeBaseRecord{}
-	for _, item := range r.static {
-		kb := staticToCore(item)
-		merged[item.ID] = KnowledgeBaseRecord{KnowledgeBase: kb, Source: SourceStatic, Deletable: false}
-	}
-	for _, item := range runtimeItems {
-		kb := runtimeToCore(item, core.ScopeGlobal)
-		merged[item.ID] = KnowledgeBaseRecord{KnowledgeBase: kb, Source: SourceRuntime, Deletable: true}
+	for _, item := range globalRuntime {
+		key := recordKey{Scope: core.ScopeGlobal, ID: item.ID}
+		merged[key] = KnowledgeBaseRecord{KnowledgeBase: runtimeToCore(item, core.ScopeGlobal), Source: SourceRuntime, Deletable: true}
 	}
 
-	keys := make([]string, 0, len(merged))
-	for key := range merged {
-		keys = append(keys, key)
+	if r.projectStore != nil {
+		projectRuntime, err := r.projectStore.List()
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range projectRuntime {
+			key := recordKey{Scope: core.ScopeProject, ID: item.ID}
+			merged[key] = KnowledgeBaseRecord{KnowledgeBase: runtimeToCore(item, core.ScopeProject), Source: SourceRuntime, Deletable: true}
+		}
 	}
-	sort.Strings(keys)
+
+	keys := make([]recordKey, 0, len(merged))
+	for k := range merged {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].Scope != keys[j].Scope {
+			return keys[i].Scope == core.ScopeProject
+		}
+		return keys[i].ID < keys[j].ID
+	})
 
 	out := make([]KnowledgeBaseRecord, 0, len(keys))
-	for _, key := range keys {
-		out = append(out, merged[key])
+	for _, k := range keys {
+		out = append(out, merged[k])
 	}
 	return out, nil
 }
