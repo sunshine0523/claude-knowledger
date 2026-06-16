@@ -1,14 +1,19 @@
 package mcp_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	mcpadapter "github.com/kindbrave/knowledger/internal/adapters/mcp"
 	"github.com/kindbrave/knowledger/internal/backends/text"
 	"github.com/kindbrave/knowledger/internal/core"
+	"github.com/kindbrave/knowledger/internal/registry"
 	"github.com/kindbrave/knowledger/internal/service"
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -334,4 +339,217 @@ func extractItemID(t *testing.T, content []mcp.Content) string {
 	}
 	t.Fatalf("add result did not include item ID")
 	return ""
+}
+
+// --- scope-aware coverage ---
+
+func TestSearchKnowledgeSchemaIncludesScopeAndKBIDsItems(t *testing.T) {
+	tool := findTool(t, mcpadapter.NewServer(nil).Tools(), "search_knowledge")
+	if _, ok := tool.InputSchema.Properties["scope"]; !ok {
+		t.Fatalf("expected search_knowledge schema to expose scope")
+	}
+	kbIDs, ok := tool.InputSchema.Properties["kb_ids"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected kb_ids property to be an object schema, got %T", tool.InputSchema.Properties["kb_ids"])
+	}
+	items, ok := kbIDs["items"]
+	if !ok {
+		t.Fatalf("expected kb_ids schema to declare items")
+	}
+	itemsBytes, err := json.Marshal(items)
+	if err != nil {
+		t.Fatalf("marshal items schema: %v", err)
+	}
+	if !strings.Contains(string(itemsBytes), "oneOf") {
+		t.Fatalf("expected kb_ids items to declare oneOf, got %s", itemsBytes)
+	}
+}
+
+func TestGetAddIndexSchemasIncludeOptionalScope(t *testing.T) {
+	tools := mcpadapter.NewServer(nil).Tools()
+	for _, name := range []string{"get_knowledge_item", "add_knowledge_item", "index_knowledge"} {
+		tool := findTool(t, tools, name)
+		if _, ok := tool.InputSchema.Properties["scope"]; !ok {
+			t.Fatalf("expected %s to expose scope property", name)
+		}
+		for _, required := range tool.InputSchema.Required {
+			if required == "scope" {
+				t.Fatalf("scope must be optional on %s", name)
+			}
+		}
+	}
+}
+
+func TestMCPProjectScopeDefaultsThroughService(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ctx := context.Background()
+	projectRoot := t.TempDir()
+	projectDataDir := filepath.Join(projectRoot, "data-project")
+	globalDataDir := t.TempDir()
+	if err := os.MkdirAll(projectDataDir, 0o755); err != nil {
+		t.Fatalf("mkdir project data: %v", err)
+	}
+
+	projectStore := registry.NewMemoryStore([]registry.RuntimeKnowledgeBase{{
+		ID: "notes", Name: "Project Notes", StoreType: "text",
+		StoreConfig: map[string]any{"path": projectDataDir}, Enabled: true,
+	}})
+	globalStore := registry.NewMemoryStore([]registry.RuntimeKnowledgeBase{{
+		ID: "notes", Name: "Global Notes", StoreType: "text",
+		StoreConfig: map[string]any{"path": globalDataDir}, Enabled: true,
+	}})
+	reg := registry.New(nil, globalStore, projectStore, projectRoot)
+	build := func(_ []core.KnowledgeBase) (map[string]core.StoreBackend, error) {
+		return map[string]core.StoreBackend{"text": text.New()}, nil
+	}
+	svc, err := service.NewManaged(reg, build)
+	if err != nil {
+		t.Fatalf("NewManaged: %v", err)
+	}
+	defer svc.Close()
+	if !svc.HasProjectScope() {
+		t.Fatalf("expected project scope")
+	}
+
+	adapter := mcpadapter.NewServer(svc)
+	client, err := mcpclient.NewInProcessClient(adapter.MCPServer())
+	if err != nil {
+		t.Fatalf("new in-process client: %v", err)
+	}
+	defer client.Close()
+	if err := client.Start(ctx); err != nil {
+		t.Fatalf("start client: %v", err)
+	}
+	initRequest := mcp.InitializeRequest{}
+	initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initRequest.Params.ClientInfo = mcp.Implementation{Name: "knowledger-test", Version: "0.1.0"}
+	if _, err := client.Initialize(ctx, initRequest); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+
+	// add omits scope -> defaults to project (since HasProjectScope=true)
+	addRequest := mcp.CallToolRequest{}
+	addRequest.Params.Name = "add_knowledge_item"
+	addRequest.Params.Arguments = map[string]any{
+		"kb_id":   "notes",
+		"title":   "Project Doc",
+		"content": "Belongs to the project KB.",
+	}
+	addResult, err := client.CallTool(ctx, addRequest)
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if addResult.IsError {
+		t.Fatalf("add error: %s", firstTextContent(t, addResult.Content))
+	}
+
+	// search with bare kb_id "notes" should hit project scope only
+	searchRequest := mcp.CallToolRequest{}
+	searchRequest.Params.Name = "search_knowledge"
+	searchRequest.Params.Arguments = map[string]any{
+		"query":       "Belongs",
+		"kb_ids":      []any{"notes"},
+		"search_mode": "lexical",
+	}
+	searchResult, err := client.CallTool(ctx, searchRequest)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if searchResult.IsError {
+		t.Fatalf("search error: %s", firstTextContent(t, searchResult.Content))
+	}
+	structured, ok := searchResult.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("expected structured search result, got %T", searchResult.StructuredContent)
+	}
+	hits, ok := structured["Hits"].([]any)
+	if !ok {
+		t.Fatalf("expected Hits slice, got %T", structured["Hits"])
+	}
+	if len(hits) != 1 {
+		t.Fatalf("expected exactly 1 hit (project scope only), got %d", len(hits))
+	}
+	hit, _ := hits[0].(map[string]any)
+	if hit["Scope"] != core.ScopeProject {
+		t.Fatalf("expected hit scope=project, got %v", hit["Scope"])
+	}
+	if hit["KBID"] != "notes" {
+		t.Fatalf("expected hit kb=notes, got %v", hit["KBID"])
+	}
+
+	// search with scope:id syntax also works
+	searchRequest.Params.Arguments = map[string]any{
+		"query":       "Belongs",
+		"kb_ids":      []any{"project:notes"},
+		"search_mode": "lexical",
+	}
+	res2, err := client.CallTool(ctx, searchRequest)
+	if err != nil || res2.IsError {
+		t.Fatalf("search scope:id: err=%v isError=%v body=%s", err, res2 != nil && res2.IsError, firstTextContent(t, res2.Content))
+	}
+
+	// search with object kb_ids form
+	searchRequest.Params.Arguments = map[string]any{
+		"query":       "Belongs",
+		"kb_ids":      []any{map[string]any{"scope": "project", "id": "notes"}},
+		"search_mode": "lexical",
+	}
+	res3, err := client.CallTool(ctx, searchRequest)
+	if err != nil || res3.IsError {
+		t.Fatalf("search object: err=%v isError=%v body=%s", err, res3 != nil && res3.IsError, firstTextContent(t, res3.Content))
+	}
+}
+
+func TestMCPLogModeBannerProjectMode(t *testing.T) {
+	projectRoot := t.TempDir()
+	reg := registry.New(nil, registry.NewMemoryStore(nil), registry.NewMemoryStore(nil), projectRoot)
+	build := func(_ []core.KnowledgeBase) (map[string]core.StoreBackend, error) {
+		return map[string]core.StoreBackend{}, nil
+	}
+	svc, err := service.NewManaged(reg, build)
+	if err != nil {
+		t.Fatalf("NewManaged: %v", err)
+	}
+	defer svc.Close()
+	out := captureStderr(t, func(w *os.File) {
+		mcpadapter.NewServer(svc).LogModeBannerForTest(w)
+	})
+	want := "knowledger: project mode (root=" + projectRoot + ")"
+	if !strings.Contains(out, want) {
+		t.Fatalf("expected banner to contain %q, got %q", want, out)
+	}
+}
+
+func TestMCPLogModeBannerGlobalMode(t *testing.T) {
+	reg := registry.New(nil, registry.NewMemoryStore(nil), nil, "")
+	build := func(_ []core.KnowledgeBase) (map[string]core.StoreBackend, error) {
+		return map[string]core.StoreBackend{}, nil
+	}
+	svc, err := service.NewManaged(reg, build)
+	if err != nil {
+		t.Fatalf("NewManaged: %v", err)
+	}
+	defer svc.Close()
+	out := captureStderr(t, func(w *os.File) {
+		mcpadapter.NewServer(svc).LogModeBannerForTest(w)
+	})
+	if !strings.Contains(out, "knowledger: global mode") {
+		t.Fatalf("expected global mode banner, got %q", out)
+	}
+}
+
+func captureStderr(t *testing.T, fn func(w *os.File)) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	fn(w)
+	w.Close()
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("copy: %v", err)
+	}
+	r.Close()
+	return buf.String()
 }
