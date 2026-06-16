@@ -126,18 +126,11 @@ func (s *Service) Search(ctx context.Context, opt core.SearchOptions) (SearchRes
 }
 
 func (s *Service) Add(ctx context.Context, input core.AddInput) (core.KnowledgeItem, core.IngestionResult, core.IndexStatus, error) {
-	kbs, backends := s.snapshot()
-	for _, kb := range kbs {
-		if kb.ID != input.KBID {
-			continue
-		}
-		backend, ok := backends[kb.StoreType]
-		if !ok {
-			return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, &core.Error{Kind: core.ErrorKindConfig, Message: "backend not registered for store type " + kb.StoreType}
-		}
-		return backend.Add(ctx, kb, input)
+	kb, backend, err := s.backendFor(input.Scope, input.KBID)
+	if err != nil {
+		return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, err
 	}
-	return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, &core.Error{Kind: core.ErrorKindConfig, Message: "knowledge base not found"}
+	return backend.Add(ctx, kb, input)
 }
 
 func (s *Service) IndexKnowledge(ctx context.Context, input IndexKnowledgeInput) (IndexKnowledgeResult, error) {
@@ -212,19 +205,19 @@ func (s *Service) ListKnowledgeBaseSummaries(ctx context.Context) ([]KnowledgeBa
 	return summaries, nil
 }
 
-func (s *Service) ListKnowledgeItems(ctx context.Context, kbID string) ([]core.KnowledgeItem, error) {
+func (s *Service) ListKnowledgeItems(ctx context.Context, scope, kbID string) ([]core.KnowledgeItem, error) {
 	kbID = strings.TrimSpace(kbID)
 	if kbID == "" {
 		return nil, &core.Error{Kind: core.ErrorKindConfig, Message: "knowledge base id is required"}
 	}
-	kb, backend, err := s.backendForKnowledgeBase(kbID)
+	kb, backend, err := s.backendFor(scope, kbID)
 	if err != nil {
 		return nil, err
 	}
 	return backend.ListItems(ctx, kb)
 }
 
-func (s *Service) GetKnowledgeItem(ctx context.Context, kbID string, itemID string) (core.KnowledgeItem, error) {
+func (s *Service) GetKnowledgeItem(ctx context.Context, scope, kbID, itemID string) (core.KnowledgeItem, error) {
 	kbID = strings.TrimSpace(kbID)
 	itemID = strings.TrimSpace(itemID)
 	if kbID == "" {
@@ -233,14 +226,14 @@ func (s *Service) GetKnowledgeItem(ctx context.Context, kbID string, itemID stri
 	if itemID == "" {
 		return core.KnowledgeItem{}, &core.Error{Kind: core.ErrorKindConfig, Message: "knowledge item id is required"}
 	}
-	kb, backend, err := s.backendForKnowledgeBase(kbID)
+	kb, backend, err := s.backendFor(scope, kbID)
 	if err != nil {
 		return core.KnowledgeItem{}, err
 	}
 	return backend.GetItem(ctx, kb, itemID)
 }
 
-func (s *Service) DeleteKnowledgeItem(ctx context.Context, kbID string, itemID string) error {
+func (s *Service) DeleteKnowledgeItem(ctx context.Context, scope, kbID, itemID string) error {
 	kbID = strings.TrimSpace(kbID)
 	itemID = strings.TrimSpace(itemID)
 	if kbID == "" {
@@ -249,7 +242,7 @@ func (s *Service) DeleteKnowledgeItem(ctx context.Context, kbID string, itemID s
 	if itemID == "" {
 		return &core.Error{Kind: core.ErrorKindConfig, Message: "knowledge item id is required"}
 	}
-	kb, backend, err := s.backendForKnowledgeBase(kbID)
+	kb, backend, err := s.backendFor(scope, kbID)
 	if err != nil {
 		return err
 	}
@@ -362,17 +355,21 @@ func (s *Service) snapshot() ([]core.KnowledgeBase, map[string]core.StoreBackend
 }
 
 func (s *Service) listItemsForKnowledgeBase(ctx context.Context, kb core.KnowledgeBase) ([]core.KnowledgeItem, error) {
-	_, backend, err := s.backendForKnowledgeBase(kb.ID)
+	_, backend, err := s.backendFor(kb.Scope, kb.ID)
 	if err != nil {
 		return nil, err
 	}
 	return backend.ListItems(ctx, kb)
 }
 
-func (s *Service) backendForKnowledgeBase(kbID string) (core.KnowledgeBase, core.StoreBackend, error) {
+func (s *Service) backendFor(scope, kbID string) (core.KnowledgeBase, core.StoreBackend, error) {
+	scope, err := core.NormalizeScope(scope)
+	if err != nil {
+		return core.KnowledgeBase{}, nil, &core.Error{Kind: core.ErrorKindConfig, Message: err.Error()}
+	}
 	kbs, backends := s.snapshot()
 	for _, kb := range kbs {
-		if kb.ID != kbID {
+		if kb.ID != kbID || kb.Scope != scope {
 			continue
 		}
 		backend, ok := backends[kb.StoreType]

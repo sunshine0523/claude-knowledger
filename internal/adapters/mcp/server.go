@@ -199,7 +199,7 @@ func (s *Server) handleGetKnowledgeItem(ctx context.Context, request mcpgo.CallT
 	if err := request.BindArguments(&input); err != nil {
 		return mcpgo.NewToolResultErrorFromErr("invalid arguments", err), nil
 	}
-	item, err := s.svc.GetKnowledgeItem(ctx, input.KBID, input.ItemID)
+	item, err := s.svc.GetKnowledgeItem(ctx, core.ScopeGlobal, input.KBID, input.ItemID) // TODO(plan-3): scope
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -214,7 +214,8 @@ func (s *Server) handleAddKnowledgeItem(ctx context.Context, request mcpgo.CallT
 	if err := request.BindArguments(&input); err != nil {
 		return mcpgo.NewToolResultErrorFromErr("invalid arguments", err), nil
 	}
-	item, ingestionResult, indexStatus, err := s.svc.Add(ctx, core.AddInput{KBID: input.KBID, Title: input.Title, Content: input.Content, Tags: input.Tags, Metadata: input.Metadata})
+	// TODO(plan-3): scope
+	item, ingestionResult, indexStatus, err := s.svc.Add(ctx, core.AddInput{KBID: input.KBID, Scope: core.ScopeGlobal, Title: input.Title, Content: input.Content, Tags: input.Tags, Metadata: input.Metadata})
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}

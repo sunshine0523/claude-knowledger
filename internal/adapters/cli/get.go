@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/kindbrave/knowledger/internal/core"
 	"github.com/kindbrave/knowledger/internal/service"
 	"github.com/spf13/cobra"
 )
@@ -14,7 +15,7 @@ func newGetCommand(svc *service.Service) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "get",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			item, err := svc.GetKnowledgeItem(context.Background(), kbID, itemID)
+			item, err := svc.GetKnowledgeItem(context.Background(), core.ScopeGlobal, kbID, itemID)
 			if err != nil {
 				return err
 			}

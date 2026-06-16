@@ -17,8 +17,8 @@ import (
 type webService interface {
 	ListKnowledgeBaseRecords() ([]registry.KnowledgeBaseRecord, error)
 	ListKnowledgeBaseSummaries(context.Context) ([]service.KnowledgeBaseSummary, error)
-	ListKnowledgeItems(context.Context, string) ([]core.KnowledgeItem, error)
-	DeleteKnowledgeItem(context.Context, string, string) error
+	ListKnowledgeItems(context.Context, string, string) ([]core.KnowledgeItem, error)
+	DeleteKnowledgeItem(context.Context, string, string, string) error
 	CreateKnowledgeBase(context.Context, service.CreateKnowledgeBaseInput) (registry.KnowledgeBaseRecord, error)
 	DeleteKnowledgeBase(context.Context, string) error
 	Search(context.Context, core.SearchOptions) (service.SearchResult, error)
@@ -261,7 +261,7 @@ func (s *Server) apiListKnowledgeItems(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "missing_id", "knowledge base id is required")
 		return
 	}
-	items, err := s.svc.ListKnowledgeItems(r.Context(), id)
+	items, err := s.svc.ListKnowledgeItems(r.Context(), core.ScopeGlobal, id) // TODO(plan-2): scope
 	if err != nil {
 		writeAPIError(w, statusForError(err), codeForError(err), err.Error())
 		return
@@ -296,7 +296,7 @@ func (s *Server) apiDeleteKnowledgeItem(w http.ResponseWriter, r *http.Request) 
 		writeAPIError(w, http.StatusBadRequest, "missing_item_id", "knowledge item id is required")
 		return
 	}
-	if err := s.svc.DeleteKnowledgeItem(r.Context(), kbID, itemID); err != nil {
+	if err := s.svc.DeleteKnowledgeItem(r.Context(), core.ScopeGlobal, kbID, itemID); err != nil { // TODO(plan-2): scope
 		writeAPIError(w, statusForError(err), codeForError(err), err.Error())
 		return
 	}

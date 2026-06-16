@@ -399,14 +399,14 @@ func TestServiceListsAndDeletesKnowledgeItems(t *testing.T) {
 		map[string]core.StoreBackend{"text": backend},
 	)
 
-	items, err := svc.ListKnowledgeItems(context.Background(), "docs")
+	items, err := svc.ListKnowledgeItems(context.Background(), "", "docs")
 	if err != nil {
 		t.Fatalf("ListKnowledgeItems returned error: %v", err)
 	}
 	if len(items) != 1 || items[0].ID != "item-1" || items[0].KBID != "docs" {
 		t.Fatalf("unexpected items: %#v", items)
 	}
-	if err := svc.DeleteKnowledgeItem(context.Background(), "docs", "item-1"); err != nil {
+	if err := svc.DeleteKnowledgeItem(context.Background(), "", "docs", "item-1"); err != nil {
 		t.Fatalf("DeleteKnowledgeItem returned error: %v", err)
 	}
 	if backend.deletedKB != "docs" || backend.deletedItem != "item-1" {
@@ -421,7 +421,7 @@ func TestServiceGetsKnowledgeItem(t *testing.T) {
 		map[string]core.StoreBackend{"text": backend},
 	)
 
-	item, err := svc.GetKnowledgeItem(context.Background(), "docs", "item-1")
+	item, err := svc.GetKnowledgeItem(context.Background(), "", "docs", "item-1")
 	if err != nil {
 		t.Fatalf("GetKnowledgeItem returned error: %v", err)
 	}
@@ -435,23 +435,23 @@ func TestServiceGetsKnowledgeItem(t *testing.T) {
 
 func TestServiceGetKnowledgeItemValidatesInputs(t *testing.T) {
 	svc := service.New(nil, nil)
-	if _, err := svc.GetKnowledgeItem(context.Background(), "", "item"); err == nil {
+	if _, err := svc.GetKnowledgeItem(context.Background(), "", "", "item"); err == nil {
 		t.Fatalf("expected empty kb id to fail")
 	}
-	if _, err := svc.GetKnowledgeItem(context.Background(), "docs", ""); err == nil {
+	if _, err := svc.GetKnowledgeItem(context.Background(), "", "docs", ""); err == nil {
 		t.Fatalf("expected empty item id to fail")
 	}
-	if _, err := svc.GetKnowledgeItem(context.Background(), "missing", "item"); err == nil {
+	if _, err := svc.GetKnowledgeItem(context.Background(), "", "missing", "item"); err == nil {
 		t.Fatalf("expected missing KB get to fail")
 	}
 }
 
 func TestServiceReturnsErrorForMissingKnowledgeBaseItems(t *testing.T) {
 	svc := service.New(nil, nil)
-	if _, err := svc.ListKnowledgeItems(context.Background(), "missing"); err == nil {
+	if _, err := svc.ListKnowledgeItems(context.Background(), "", "missing"); err == nil {
 		t.Fatalf("expected missing KB list to fail")
 	}
-	if err := svc.DeleteKnowledgeItem(context.Background(), "missing", "item"); err == nil {
+	if err := svc.DeleteKnowledgeItem(context.Background(), "", "missing", "item"); err == nil {
 		t.Fatalf("expected missing KB delete to fail")
 	}
 }
@@ -906,5 +906,52 @@ func TestCreateSQLiteKnowledgeBaseCanDisableSemantic(t *testing.T) {
 	semantic := record.KnowledgeBase.Indexing["semantic"].(map[string]any)
 	if semantic["enabled"] != false {
 		t.Fatalf("expected semantic disabled, got %#v", semantic)
+	}
+}
+
+type scopeAwareFakeBackend struct {
+	addFunc func(context.Context, core.KnowledgeBase, core.AddInput) (core.KnowledgeItem, core.IngestionResult, core.IndexStatus, error)
+}
+
+func (f *scopeAwareFakeBackend) Add(ctx context.Context, kb core.KnowledgeBase, in core.AddInput) (core.KnowledgeItem, core.IngestionResult, core.IndexStatus, error) {
+	if f.addFunc != nil {
+		return f.addFunc(ctx, kb, in)
+	}
+	return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, nil
+}
+func (f *scopeAwareFakeBackend) Search(context.Context, core.KnowledgeBase, core.SearchOptions) ([]core.SearchHit, error) {
+	return nil, nil
+}
+func (f *scopeAwareFakeBackend) GetItem(context.Context, core.KnowledgeBase, string) (core.KnowledgeItem, error) {
+	return core.KnowledgeItem{}, nil
+}
+func (f *scopeAwareFakeBackend) ListItems(context.Context, core.KnowledgeBase) ([]core.KnowledgeItem, error) {
+	return nil, nil
+}
+func (f *scopeAwareFakeBackend) DeleteItem(context.Context, core.KnowledgeBase, string) error {
+	return nil
+}
+func (f *scopeAwareFakeBackend) SupportsSemantic(core.KnowledgeBase) bool { return false }
+
+func TestServiceAddRoutesByScope(t *testing.T) {
+	addCalls := []core.KnowledgeBase{}
+	backend := &scopeAwareFakeBackend{
+		addFunc: func(_ context.Context, kb core.KnowledgeBase, _ core.AddInput) (core.KnowledgeItem, core.IngestionResult, core.IndexStatus, error) {
+			addCalls = append(addCalls, kb)
+			return core.KnowledgeItem{ID: "x", KBID: kb.ID}, core.IngestionResult{Success: true, ItemID: "x"}, core.IndexStatus{}, nil
+		},
+	}
+	svc := service.New(
+		[]core.KnowledgeBase{
+			{ID: "notes", Scope: core.ScopeGlobal, StoreType: "text", Enabled: true},
+			{ID: "notes", Scope: core.ScopeProject, StoreType: "text", Enabled: true},
+		},
+		map[string]core.StoreBackend{"text": backend},
+	)
+	if _, _, _, err := svc.Add(context.Background(), core.AddInput{KBID: "notes", Scope: core.ScopeProject, Title: "t", Content: "c"}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if len(addCalls) != 1 || addCalls[0].Scope != core.ScopeProject {
+		t.Fatalf("expected one Add call to project KB, got %#v", addCalls)
 	}
 }

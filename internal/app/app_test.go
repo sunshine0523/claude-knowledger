@@ -122,17 +122,17 @@ func TestBuildServiceAllowsMultipleSQLitePaths(t *testing.T) {
 	}
 	defer func() { _ = svc.Close() }()
 
-	if _, _, _, err := svc.Add(context.Background(), core.AddInput{KBID: "one", Title: "First", Content: "only in first"}); err != nil {
+	if _, _, _, err := svc.Add(context.Background(), core.AddInput{KBID: "one", Scope: core.ScopeGlobal, Title: "First", Content: "only in first"}); err != nil {
 		t.Fatalf("Add one returned error: %v", err)
 	}
-	if _, _, _, err := svc.Add(context.Background(), core.AddInput{KBID: "two", Title: "Second", Content: "only in second"}); err != nil {
+	if _, _, _, err := svc.Add(context.Background(), core.AddInput{KBID: "two", Scope: core.ScopeGlobal, Title: "Second", Content: "only in second"}); err != nil {
 		t.Fatalf("Add two returned error: %v", err)
 	}
-	oneItems, err := svc.ListKnowledgeItems(context.Background(), "one")
+	oneItems, err := svc.ListKnowledgeItems(context.Background(), core.ScopeGlobal, "one")
 	if err != nil {
 		t.Fatalf("ListKnowledgeItems one returned error: %v", err)
 	}
-	twoItems, err := svc.ListKnowledgeItems(context.Background(), "two")
+	twoItems, err := svc.ListKnowledgeItems(context.Background(), core.ScopeGlobal, "two")
 	if err != nil {
 		t.Fatalf("ListKnowledgeItems two returned error: %v", err)
 	}

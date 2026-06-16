@@ -82,7 +82,7 @@ func (f *fakeWebService) ListKnowledgeBaseSummaries(context.Context) ([]service.
 	return summaries, nil
 }
 
-func (f *fakeWebService) ListKnowledgeItems(_ context.Context, kbID string) ([]core.KnowledgeItem, error) {
+func (f *fakeWebService) ListKnowledgeItems(_ context.Context, _ string, kbID string) ([]core.KnowledgeItem, error) {
 	for _, record := range f.records {
 		if record.KnowledgeBase.ID == kbID {
 			items := make([]core.KnowledgeItem, 0, len(f.items))
@@ -97,7 +97,7 @@ func (f *fakeWebService) ListKnowledgeItems(_ context.Context, kbID string) ([]c
 	return nil, &core.Error{Kind: core.ErrorKindConfig, Message: "knowledge base not found"}
 }
 
-func (f *fakeWebService) DeleteKnowledgeItem(_ context.Context, kbID string, itemID string) error {
+func (f *fakeWebService) DeleteKnowledgeItem(_ context.Context, _ string, kbID string, itemID string) error {
 	f.deletedKB = kbID
 	f.deletedItem = itemID
 	return nil

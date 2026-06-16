@@ -16,6 +16,7 @@ type SearchOptions struct {
 
 type AddInput struct {
 	KBID     string
+	Scope    string
 	Title    string
 	Content  string
 	Tags     []string

@@ -19,7 +19,7 @@ func newAddCommand(svc *service.Service) *cobra.Command {
 			if showsEmbeddedChromaHint(svc, kbID) {
 				fmt.Fprintln(cmd.ErrOrStderr(), "Embedded Chroma semantic indexing may download runtime/model files on first use; this can take a few minutes.")
 			}
-			item, ingest, status, err := svc.Add(context.Background(), core.AddInput{KBID: kbID, Title: title, Content: content})
+			item, ingest, status, err := svc.Add(context.Background(), core.AddInput{KBID: kbID, Scope: core.ScopeGlobal, Title: title, Content: content})
 			if err != nil {
 				return err
 			}
