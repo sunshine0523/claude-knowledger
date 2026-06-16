@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/kindbrave/knowledger/internal/core"
 	"github.com/kindbrave/knowledger/internal/service"
@@ -155,7 +156,16 @@ func (s *Server) handleSearchKnowledge(ctx context.Context, request mcpgo.CallTo
 	if limit == 0 {
 		limit = 10
 	}
-	result, err := s.svc.Search(ctx, core.SearchOptions{Query: input.Query, KBIDs: input.KBIDs, Limit: limit, SearchMode: input.SearchMode})
+	// TODO(plan-3): add scope field to MCP search input
+	refs := make([]core.ScopedKBRef, 0, len(input.KBIDs))
+	for _, raw := range input.KBIDs {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		refs = append(refs, core.ScopedKBRef{ID: id})
+	}
+	result, err := s.svc.Search(ctx, core.SearchOptions{Query: input.Query, KBIDs: refs, Limit: limit, SearchMode: input.SearchMode})
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}

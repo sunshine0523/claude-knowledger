@@ -4,6 +4,7 @@ import "time"
 
 type KnowledgeBase struct {
 	ID                string
+	Scope             string
 	Name              string
 	StoreType         string
 	StoreConfig       map[string]any
@@ -30,6 +31,7 @@ type KnowledgeItem struct {
 type SearchHit struct {
 	ItemID         string
 	KBID           string
+	Scope          string
 	ItemType       string
 	Title          string
 	Snippet        string

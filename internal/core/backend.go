@@ -2,10 +2,15 @@ package core
 
 import "context"
 
+type ScopedKBRef struct {
+	Scope string
+	ID    string
+}
+
 type SearchOptions struct {
 	Query      string
 	Limit      int
-	KBIDs      []string
+	KBIDs      []ScopedKBRef
 	SearchMode string
 }
 

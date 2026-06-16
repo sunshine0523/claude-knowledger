@@ -315,7 +315,7 @@ func TestAPISearchReturnsHitsAndPassesOptions(t *testing.T) {
 	if fake.lastSearch.Limit != 5 {
 		t.Fatalf("expected limit 5, got %d", fake.lastSearch.Limit)
 	}
-	if !reflect.DeepEqual(fake.lastSearch.KBIDs, []string{"default", "docs"}) {
+	if !reflect.DeepEqual(fake.lastSearch.KBIDs, []core.ScopedKBRef{{ID: "default"}, {ID: "docs"}}) {
 		t.Fatalf("expected KBIDs [default docs], got %#v", fake.lastSearch.KBIDs)
 	}
 	if fake.lastSearch.SearchMode != "hybrid" {
@@ -375,17 +375,17 @@ func TestAPISearchAcceptsAutoModeAndReturnsNormalizedRequest(t *testing.T) {
 	if fake.lastSearch.SearchMode != "auto" {
 		t.Fatalf("expected auto search mode, got %q", fake.lastSearch.SearchMode)
 	}
-	if !reflect.DeepEqual(fake.lastSearch.KBIDs, []string{"default", "docs"}) {
+	if !reflect.DeepEqual(fake.lastSearch.KBIDs, []core.ScopedKBRef{{ID: "default"}, {ID: "docs"}}) {
 		t.Fatalf("expected KBIDs [default docs], got %#v", fake.lastSearch.KBIDs)
 	}
 
 	var payload struct {
 		Success bool `json:"success"`
 		Data    struct {
-			Query      string   `json:"query"`
-			Limit      int      `json:"limit"`
-			KBIDs      []string `json:"kb_ids"`
-			SearchMode string   `json:"search_mode"`
+			Query      string             `json:"query"`
+			Limit      int                `json:"limit"`
+			KBIDs      []core.ScopedKBRef `json:"kb_ids"`
+			SearchMode string             `json:"search_mode"`
 		} `json:"data"`
 		Meta struct {
 			HitCount int `json:"hit_count"`
@@ -402,7 +402,7 @@ func TestAPISearchAcceptsAutoModeAndReturnsNormalizedRequest(t *testing.T) {
 	if payload.Data.Limit != 10 {
 		t.Fatalf("expected default limit 10, got %d", payload.Data.Limit)
 	}
-	if !reflect.DeepEqual(payload.Data.KBIDs, []string{"default", "docs"}) {
+	if !reflect.DeepEqual(payload.Data.KBIDs, []core.ScopedKBRef{{ID: "default"}, {ID: "docs"}}) {
 		t.Fatalf("expected response KBIDs [default docs], got %#v", payload.Data.KBIDs)
 	}
 	if payload.Data.SearchMode != "auto" {

@@ -351,6 +351,7 @@ func (s *Server) apiSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hits := searchHitsToViews(result.Hits)
+	// TODO(plan-2): expose scope to search request and response.
 	writeAPISuccessWithMeta(
 		w,
 		http.StatusOK,
@@ -425,13 +426,14 @@ func recordToView(record registry.KnowledgeBaseRecord) kbView {
 	}
 }
 
-func cleanKBIDs(ids []string) []string {
-	out := make([]string, 0, len(ids))
-	for _, id := range ids {
-		id = strings.TrimSpace(id)
-		if id != "" {
-			out = append(out, id)
+func cleanKBIDs(ids []string) []core.ScopedKBRef {
+	out := make([]core.ScopedKBRef, 0, len(ids))
+	for _, raw := range ids {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
 		}
+		out = append(out, core.ScopedKBRef{ID: id})
 	}
 	return out
 }

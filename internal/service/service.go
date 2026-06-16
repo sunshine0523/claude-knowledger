@@ -85,7 +85,7 @@ func (s *Service) Search(ctx context.Context, opt core.SearchOptions) (SearchRes
 	kbs, backends := s.snapshot()
 	result := SearchResult{}
 	for _, kb := range kbs {
-		if !kb.Enabled || !matchesKBFilter(kb.ID, opt.KBIDs) {
+		if !kb.Enabled || !matchesKBFilter(kb.Scope, kb.ID, opt.KBIDs) {
 			continue
 		}
 		backend, ok := backends[kb.StoreType]
@@ -576,12 +576,12 @@ func searchOptionsForKnowledgeBase(opt core.SearchOptions, kb core.KnowledgeBase
 	return effective, ""
 }
 
-func matchesKBFilter(kbID string, filter []string) bool {
+func matchesKBFilter(scope, kbID string, filter []core.ScopedKBRef) bool {
 	if len(filter) == 0 {
 		return true
 	}
-	for _, id := range filter {
-		if id == kbID {
+	for _, ref := range filter {
+		if ref.ID == kbID && (ref.Scope == "" || ref.Scope == scope) {
 			return true
 		}
 	}
