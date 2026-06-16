@@ -57,7 +57,7 @@ func TestFileStoreMalformedJSONReturnsError(t *testing.T) {
 }
 
 func TestRegistryCreatesRuntimeKnowledgeBase(t *testing.T) {
-	r := registry.New(nil, registry.NewMemoryStore(nil))
+	r := registry.New(nil, registry.NewMemoryStore(nil), nil, "")
 
 	if err := r.Create(registry.RuntimeKnowledgeBase{ID: "docs", Name: "Docs", StoreType: "text", StoreConfig: map[string]any{"path": "./docs"}, Enabled: true}); err != nil {
 		t.Fatalf("Create returned error: %v", err)
@@ -74,7 +74,7 @@ func TestRegistryCreatesRuntimeKnowledgeBase(t *testing.T) {
 
 func TestRegistryRejectsDuplicateCreate(t *testing.T) {
 	static := []config.KnowledgeBaseConfig{{ID: "docs", StoreType: "text", StoreConfig: map[string]any{"path": "./docs"}, Enabled: true}}
-	r := registry.New(static, registry.NewMemoryStore(nil))
+	r := registry.New(static, registry.NewMemoryStore(nil), nil, "")
 
 	if err := r.Create(registry.RuntimeKnowledgeBase{ID: "docs", StoreType: "text", StoreConfig: map[string]any{"path": "./other"}, Enabled: true}); err == nil {
 		t.Fatalf("expected duplicate static create to fail")
@@ -90,7 +90,7 @@ func TestRegistryRejectsDuplicateCreate(t *testing.T) {
 
 func TestRegistryDeletesRuntimeKnowledgeBaseOnly(t *testing.T) {
 	static := []config.KnowledgeBaseConfig{{ID: "static", StoreType: "text", StoreConfig: map[string]any{"path": "./static"}, Enabled: true}}
-	r := registry.New(static, registry.NewMemoryStore([]registry.RuntimeKnowledgeBase{{ID: "runtime", StoreType: "text", StoreConfig: map[string]any{"path": "./runtime"}, Enabled: true}}))
+	r := registry.New(static, registry.NewMemoryStore([]registry.RuntimeKnowledgeBase{{ID: "runtime", StoreType: "text", StoreConfig: map[string]any{"path": "./runtime"}, Enabled: true}}), nil, "")
 
 	if err := r.Delete("runtime"); err != nil {
 		t.Fatalf("Delete runtime returned error: %v", err)
@@ -109,7 +109,7 @@ func TestRegistryDeletesRuntimeKnowledgeBaseOnly(t *testing.T) {
 
 func TestRegistryDeleteRuntimeOverrideRevealsStaticKnowledgeBase(t *testing.T) {
 	static := []config.KnowledgeBaseConfig{{ID: "docs", Name: "Static Docs", StoreType: "text", StoreConfig: map[string]any{"path": "./static"}, Enabled: true}}
-	r := registry.New(static, registry.NewMemoryStore([]registry.RuntimeKnowledgeBase{{ID: "docs", Name: "Runtime Docs", StoreType: "text", StoreConfig: map[string]any{"path": "./runtime"}, Enabled: true}}))
+	r := registry.New(static, registry.NewMemoryStore([]registry.RuntimeKnowledgeBase{{ID: "docs", Name: "Runtime Docs", StoreType: "text", StoreConfig: map[string]any{"path": "./runtime"}, Enabled: true}}), nil, "")
 
 	items, err := r.ListWithSources()
 	if err != nil {
@@ -130,6 +130,17 @@ func TestRegistryDeleteRuntimeOverrideRevealsStaticKnowledgeBase(t *testing.T) {
 	}
 }
 
+func TestRegistryHasProjectStore(t *testing.T) {
+	r := registry.New(nil, registry.NewMemoryStore(nil), nil, "")
+	if r.HasProjectStore() {
+		t.Fatalf("expected HasProjectStore=false when projectStore is nil")
+	}
+	r2 := registry.New(nil, registry.NewMemoryStore(nil), registry.NewMemoryStore(nil), "/tmp/proj")
+	if !r2.HasProjectStore() {
+		t.Fatalf("expected HasProjectStore=true when projectStore is non-nil")
+	}
+}
+
 func TestRegistryMergesStaticAndRuntimeKnowledgeBases(t *testing.T) {
 	static := []config.KnowledgeBaseConfig{{
 		ID:          "docs",
@@ -147,7 +158,7 @@ func TestRegistryMergesStaticAndRuntimeKnowledgeBases(t *testing.T) {
 		Enabled:     true,
 	}})
 
-	r := registry.New(static, store)
+	r := registry.New(static, store, nil, "")
 	items, err := r.List()
 	if err != nil {
 		t.Fatalf("List returned error: %v", err)

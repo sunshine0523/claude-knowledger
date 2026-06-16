@@ -660,7 +660,7 @@ func TestKBPageRendersManagementUI(t *testing.T) {
 func testService(t *testing.T) *service.Service {
 	t.Helper()
 	static := []config.KnowledgeBaseConfig{{ID: "default", Name: "Default", StoreType: "sqlite", StoreConfig: map[string]any{"path": filepath.Join(t.TempDir(), "db")}, Enabled: true}}
-	reg := registry.New(static, registry.NewMemoryStore(nil))
+	reg := registry.New(static, registry.NewMemoryStore(nil), nil, "")
 	svc, err := service.NewManaged(reg, func([]core.KnowledgeBase) (map[string]core.StoreBackend, error) {
 		return map[string]core.StoreBackend{"text": fakeBackend{}, "sqlite": fakeBackend{}}, nil
 	})

@@ -95,7 +95,7 @@ func BuildServiceFromConfig(cfg config.Config) (*service.Service, error) {
 	if err := config.ApplyDefaults(&cfg); err != nil {
 		return nil, err
 	}
-	r := registry.New(cfg.KnowledgeBases, registry.NewFileStore(cfg.RuntimeRegistryPath))
+	r := registry.New(cfg.KnowledgeBases, registry.NewFileStore(cfg.RuntimeRegistryPath), nil, "")
 	return service.NewManaged(r, buildBackends)
 }
 

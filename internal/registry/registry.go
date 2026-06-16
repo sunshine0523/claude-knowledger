@@ -20,12 +20,23 @@ type KnowledgeBaseRecord struct {
 }
 
 type Registry struct {
-	static []config.KnowledgeBaseConfig
-	store  Store
+	static       []config.KnowledgeBaseConfig
+	globalStore  Store
+	projectStore Store
+	projectRoot  string
 }
 
-func New(static []config.KnowledgeBaseConfig, store Store) *Registry {
-	return &Registry{static: static, store: store}
+func New(static []config.KnowledgeBaseConfig, globalStore, projectStore Store, projectRoot string) *Registry {
+	return &Registry{
+		static:       static,
+		globalStore:  globalStore,
+		projectStore: projectStore,
+		projectRoot:  projectRoot,
+	}
+}
+
+func (r *Registry) HasProjectStore() bool {
+	return r.projectStore != nil
 }
 
 func staticToCore(item config.KnowledgeBaseConfig) core.KnowledgeBase {
@@ -69,7 +80,7 @@ func (r *Registry) List() ([]core.KnowledgeBase, error) {
 }
 
 func (r *Registry) ListWithSources() ([]KnowledgeBaseRecord, error) {
-	runtimeItems, err := r.store.List()
+	runtimeItems, err := r.globalStore.List()
 	if err != nil {
 		return nil, err
 	}
@@ -110,23 +121,23 @@ func (r *Registry) Create(item RuntimeKnowledgeBase) error {
 			return fmt.Errorf("knowledge base %q already exists", item.ID)
 		}
 	}
-	items, err := r.store.List()
+	items, err := r.globalStore.List()
 	if err != nil {
 		return err
 	}
 	items = append(items, item)
-	return r.store.Save(items)
+	return r.globalStore.Save(items)
 }
 
 func (r *Registry) Delete(id string) error {
-	items, err := r.store.List()
+	items, err := r.globalStore.List()
 	if err != nil {
 		return err
 	}
 	for i := range items {
 		if items[i].ID == id {
 			items = append(items[:i], items[i+1:]...)
-			return r.store.Save(items)
+			return r.globalStore.Save(items)
 		}
 	}
 	for _, item := range r.static {
@@ -138,18 +149,18 @@ func (r *Registry) Delete(id string) error {
 }
 
 func (r *Registry) RuntimeItems() ([]RuntimeKnowledgeBase, error) {
-	return r.store.List()
+	return r.globalStore.List()
 }
 
 func (r *Registry) SetEnabled(id string, enabled bool) error {
-	items, err := r.store.List()
+	items, err := r.globalStore.List()
 	if err != nil {
 		return err
 	}
 	for i := range items {
 		if items[i].ID == id {
 			items[i].Enabled = enabled
-			return r.store.Save(items)
+			return r.globalStore.Save(items)
 		}
 	}
 	return fmt.Errorf("knowledge base %q not found in runtime registry", id)

@@ -315,7 +315,7 @@ func countRunes(s string) int { return len([]rune(s)) }
 
 func TestManagedServiceCreatesAndDeletesRuntimeKnowledgeBase(t *testing.T) {
 	static := []config.KnowledgeBaseConfig{{ID: "default", StoreType: "sqlite", StoreConfig: map[string]any{"path": filepath.Join(t.TempDir(), "db")}, Enabled: true}}
-	reg := registry.New(static, registry.NewMemoryStore(nil))
+	reg := registry.New(static, registry.NewMemoryStore(nil), nil, "")
 	svc, err := service.NewManaged(reg, testBackendBuilder)
 	if err != nil {
 		t.Fatalf("NewManaged returned error: %v", err)
@@ -344,7 +344,7 @@ func TestManagedServiceCreatesAndDeletesRuntimeKnowledgeBase(t *testing.T) {
 }
 
 func TestManagedServiceRejectsStaticDelete(t *testing.T) {
-	reg := registry.New([]config.KnowledgeBaseConfig{{ID: "default", StoreType: "text", StoreConfig: map[string]any{"path": t.TempDir()}, Enabled: true}}, registry.NewMemoryStore(nil))
+	reg := registry.New([]config.KnowledgeBaseConfig{{ID: "default", StoreType: "text", StoreConfig: map[string]any{"path": t.TempDir()}, Enabled: true}}, registry.NewMemoryStore(nil), nil, "")
 	svc, err := service.NewManaged(reg, testBackendBuilder)
 	if err != nil {
 		t.Fatalf("NewManaged returned error: %v", err)
@@ -356,7 +356,7 @@ func TestManagedServiceRejectsStaticDelete(t *testing.T) {
 
 func TestManagedServiceAllowsMultipleSQLitePaths(t *testing.T) {
 	basePath := filepath.Join(t.TempDir(), "db")
-	reg := registry.New([]config.KnowledgeBaseConfig{{ID: "default", StoreType: "sqlite", StoreConfig: map[string]any{"path": basePath}, Enabled: true}}, registry.NewMemoryStore(nil))
+	reg := registry.New([]config.KnowledgeBaseConfig{{ID: "default", StoreType: "sqlite", StoreConfig: map[string]any{"path": basePath}, Enabled: true}}, registry.NewMemoryStore(nil), nil, "")
 	svc, err := service.NewManaged(reg, testBackendBuilder)
 	if err != nil {
 		t.Fatalf("NewManaged returned error: %v", err)
@@ -376,7 +376,7 @@ func TestManagedServiceAllowsMultipleSQLitePaths(t *testing.T) {
 }
 
 func TestManagedServiceRejectsInvalidCreateInput(t *testing.T) {
-	reg := registry.New(nil, registry.NewMemoryStore(nil))
+	reg := registry.New(nil, registry.NewMemoryStore(nil), nil, "")
 	svc, err := service.NewManaged(reg, testBackendBuilder)
 	if err != nil {
 		t.Fatalf("NewManaged returned error: %v", err)
@@ -877,7 +877,7 @@ func TestSearchFallsBackForSemanticFailure(t *testing.T) {
 }
 
 func TestCreateSQLiteKnowledgeBaseDefaultsToPersistentSemantic(t *testing.T) {
-	reg := registry.New(nil, registry.NewMemoryStore(nil))
+	reg := registry.New(nil, registry.NewMemoryStore(nil), nil, "")
 	svc, err := service.NewManaged(reg, testBackendBuilder)
 	if err != nil {
 		t.Fatalf("NewManaged returned error: %v", err)
@@ -893,7 +893,7 @@ func TestCreateSQLiteKnowledgeBaseDefaultsToPersistentSemantic(t *testing.T) {
 }
 
 func TestCreateSQLiteKnowledgeBaseCanDisableSemantic(t *testing.T) {
-	reg := registry.New(nil, registry.NewMemoryStore(nil))
+	reg := registry.New(nil, registry.NewMemoryStore(nil), nil, "")
 	svc, err := service.NewManaged(reg, testBackendBuilder)
 	if err != nil {
 		t.Fatalf("NewManaged returned error: %v", err)
