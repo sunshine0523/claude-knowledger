@@ -47,6 +47,7 @@ type apiError struct {
 
 type kbView struct {
 	ID                string   `json:"id"`
+	Scope             string   `json:"scope"`
 	Name              string   `json:"name"`
 	StoreType         string   `json:"store_type"`
 	Path              string   `json:"path"`
@@ -119,6 +120,8 @@ type dashboardSummary struct {
 	DisabledKBs int            `json:"disabled_kbs"`
 	RuntimeKBs  int            `json:"runtime_kbs"`
 	StaticKBs   int            `json:"static_kbs"`
+	ProjectKBs  int            `json:"project_kbs"`
+	GlobalKBs   int            `json:"global_kbs"`
 	StoreTypes  map[string]int `json:"store_types"`
 }
 
@@ -433,6 +436,7 @@ func recordToView(record registry.KnowledgeBaseRecord) kbView {
 	path, _ := kb.StoreConfig["path"].(string)
 	return kbView{
 		ID:                kb.ID,
+		Scope:             kb.Scope,
 		Name:              kb.Name,
 		StoreType:         kb.StoreType,
 		Path:              path,
@@ -526,6 +530,12 @@ func dashboardSummaryFromViews(views []kbView) dashboardSummary {
 			summary.RuntimeKBs++
 		case registry.SourceStatic:
 			summary.StaticKBs++
+		}
+		switch view.Scope {
+		case core.ScopeProject:
+			summary.ProjectKBs++
+		case core.ScopeGlobal:
+			summary.GlobalKBs++
 		}
 		if view.StoreType != "" {
 			summary.StoreTypes[view.StoreType]++

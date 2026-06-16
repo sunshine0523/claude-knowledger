@@ -527,6 +527,45 @@ func TestAPIDashboardReturnsKnowledgeBaseSummary(t *testing.T) {
 	}
 }
 
+func TestDashboardSummaryCountsScopes(t *testing.T) {
+	fake := &fakeWebService{
+		records: []registry.KnowledgeBaseRecord{
+			{KnowledgeBase: core.KnowledgeBase{ID: "g1", Scope: core.ScopeGlobal, StoreType: "text", Enabled: true}, Source: registry.SourceRuntime, Deletable: true},
+			{KnowledgeBase: core.KnowledgeBase{ID: "p1", Scope: core.ScopeProject, StoreType: "text", Enabled: true}, Source: registry.SourceRuntime, Deletable: true},
+			{KnowledgeBase: core.KnowledgeBase{ID: "p2", Scope: core.ScopeProject, StoreType: "sqlite", Enabled: true}, Source: registry.SourceRuntime, Deletable: true},
+		},
+	}
+	srv := webadapter.NewServer(fake)
+	res := serve(t, srv, http.MethodGet, "/api/dashboard", nil)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+	var payload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Summary struct {
+				ProjectKBs int `json:"project_kbs"`
+				GlobalKBs  int `json:"global_kbs"`
+			} `json:"summary"`
+			KnowledgeBases []struct {
+				ID    string `json:"id"`
+				Scope string `json:"scope"`
+			} `json:"knowledge_bases"`
+		} `json:"data"`
+	}
+	decodeResponse(t, res, &payload)
+	if payload.Data.Summary.ProjectKBs != 2 || payload.Data.Summary.GlobalKBs != 1 {
+		t.Fatalf("unexpected scope counts: %#v", payload.Data.Summary)
+	}
+	scopes := map[string]string{}
+	for _, kb := range payload.Data.KnowledgeBases {
+		scopes[kb.ID] = kb.Scope
+	}
+	if scopes["g1"] != core.ScopeGlobal || scopes["p1"] != core.ScopeProject {
+		t.Fatalf("unexpected scopes: %#v", scopes)
+	}
+}
+
 func TestAPIKnowledgeItemsListAndDelete(t *testing.T) {
 	fake := &fakeWebService{
 		records: []registry.KnowledgeBaseRecord{{
