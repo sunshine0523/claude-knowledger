@@ -910,7 +910,8 @@ func TestCreateSQLiteKnowledgeBaseCanDisableSemantic(t *testing.T) {
 }
 
 type scopeAwareFakeBackend struct {
-	addFunc func(context.Context, core.KnowledgeBase, core.AddInput) (core.KnowledgeItem, core.IngestionResult, core.IndexStatus, error)
+	addFunc    func(context.Context, core.KnowledgeBase, core.AddInput) (core.KnowledgeItem, core.IngestionResult, core.IndexStatus, error)
+	searchFunc func(context.Context, core.KnowledgeBase, core.SearchOptions) ([]core.SearchHit, error)
 }
 
 func (f *scopeAwareFakeBackend) Add(ctx context.Context, kb core.KnowledgeBase, in core.AddInput) (core.KnowledgeItem, core.IngestionResult, core.IndexStatus, error) {
@@ -919,7 +920,10 @@ func (f *scopeAwareFakeBackend) Add(ctx context.Context, kb core.KnowledgeBase, 
 	}
 	return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, nil
 }
-func (f *scopeAwareFakeBackend) Search(context.Context, core.KnowledgeBase, core.SearchOptions) ([]core.SearchHit, error) {
+func (f *scopeAwareFakeBackend) Search(ctx context.Context, kb core.KnowledgeBase, opt core.SearchOptions) ([]core.SearchHit, error) {
+	if f.searchFunc != nil {
+		return f.searchFunc(ctx, kb, opt)
+	}
 	return nil, nil
 }
 func (f *scopeAwareFakeBackend) GetItem(context.Context, core.KnowledgeBase, string) (core.KnowledgeItem, error) {
@@ -953,5 +957,67 @@ func TestServiceAddRoutesByScope(t *testing.T) {
 	}
 	if len(addCalls) != 1 || addCalls[0].Scope != core.ScopeProject {
 		t.Fatalf("expected one Add call to project KB, got %#v", addCalls)
+	}
+}
+
+func TestServiceSearchFiltersByScopedRef(t *testing.T) {
+	calls := []core.KnowledgeBase{}
+	backend := &scopeAwareFakeBackend{
+		searchFunc: func(_ context.Context, kb core.KnowledgeBase, _ core.SearchOptions) ([]core.SearchHit, error) {
+			calls = append(calls, kb)
+			return []core.SearchHit{{ItemID: "1", KBID: kb.ID, Title: "t", Score: 1}}, nil
+		},
+	}
+	svc := service.New(
+		[]core.KnowledgeBase{
+			{ID: "notes", Scope: core.ScopeGlobal, StoreType: "text", Enabled: true},
+			{ID: "notes", Scope: core.ScopeProject, StoreType: "text", Enabled: true},
+			{ID: "default", Scope: core.ScopeGlobal, StoreType: "text", Enabled: true},
+		},
+		map[string]core.StoreBackend{"text": backend},
+	)
+	res, err := svc.Search(context.Background(), core.SearchOptions{
+		Query: "foo",
+		KBIDs: []core.ScopedKBRef{{Scope: core.ScopeProject, ID: "notes"}},
+	})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(calls) != 1 || calls[0].Scope != core.ScopeProject {
+		t.Fatalf("expected one search call to project notes, got %#v", calls)
+	}
+	if len(res.Hits) != 1 || res.Hits[0].Scope != core.ScopeProject {
+		t.Fatalf("expected hit scope=project, got %#v", res.Hits)
+	}
+}
+
+func TestServiceSearchEmptyFilterIncludesAllScopes(t *testing.T) {
+	calls := []core.KnowledgeBase{}
+	backend := &scopeAwareFakeBackend{
+		searchFunc: func(_ context.Context, kb core.KnowledgeBase, _ core.SearchOptions) ([]core.SearchHit, error) {
+			calls = append(calls, kb)
+			return []core.SearchHit{{ItemID: kb.ID, KBID: kb.ID, Title: "t", Score: 1}}, nil
+		},
+	}
+	svc := service.New(
+		[]core.KnowledgeBase{
+			{ID: "notes", Scope: core.ScopeGlobal, StoreType: "text", Enabled: true},
+			{ID: "notes", Scope: core.ScopeProject, StoreType: "text", Enabled: true},
+		},
+		map[string]core.StoreBackend{"text": backend},
+	)
+	res, err := svc.Search(context.Background(), core.SearchOptions{Query: "foo"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("expected search calls to both KBs, got %d", len(calls))
+	}
+	gotScopes := map[string]bool{}
+	for _, h := range res.Hits {
+		gotScopes[h.Scope] = true
+	}
+	if !gotScopes[core.ScopeGlobal] || !gotScopes[core.ScopeProject] {
+		t.Fatalf("expected hits across both scopes, got %#v", gotScopes)
 	}
 }

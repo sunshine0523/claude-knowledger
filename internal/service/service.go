@@ -111,12 +111,12 @@ func (s *Service) Search(ctx context.Context, opt core.SearchOptions) (SearchRes
 					return SearchResult{}, fallbackErr
 				}
 				result.Warnings = append(result.Warnings, kb.ID+": semantic path unavailable, lexical fallback used")
-				result.Hits = append(result.Hits, kbHits...)
+				result.Hits = append(result.Hits, stampScope(kb.Scope, kbHits)...)
 				continue
 			}
 			return SearchResult{}, err
 		}
-		result.Hits = append(result.Hits, kbHits...)
+		result.Hits = append(result.Hits, stampScope(kb.Scope, kbHits)...)
 	}
 	sort.Slice(result.Hits, func(i, j int) bool { return result.Hits[i].Score > result.Hits[j].Score })
 	if opt.Limit > 0 && len(result.Hits) > opt.Limit {
@@ -470,28 +470,29 @@ const searchFallbackSnippetRunes = 240
 
 func (s *Service) withSearchSnippets(ctx context.Context, query string, result SearchResult, backends map[string]core.StoreBackend) SearchResult {
 	kbs, _ := s.snapshot()
-	kbByID := make(map[string]core.KnowledgeBase, len(kbs))
+	type kbKey struct{ Scope, ID string }
+	kbByKey := make(map[kbKey]core.KnowledgeBase, len(kbs))
 	for _, kb := range kbs {
-		kbByID[kb.ID] = kb
+		kbByKey[kbKey{kb.Scope, kb.ID}] = kb
 	}
 	for i := range result.Hits {
 		hit := &result.Hits[i]
-		kb, ok := kbByID[hit.KBID]
+		kb, ok := kbByKey[kbKey{hit.Scope, hit.KBID}]
 		if !ok {
 			setFallbackSnippet(hit)
-			result.Warnings = append(result.Warnings, fmt.Sprintf("%s/%s: could not load full content for snippet", hit.KBID, hit.ItemID))
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%s/%s/%s: could not load full content for snippet", hit.Scope, hit.KBID, hit.ItemID))
 			continue
 		}
 		backend := backends[kb.StoreType]
 		if backend == nil {
 			setFallbackSnippet(hit)
-			result.Warnings = append(result.Warnings, fmt.Sprintf("%s/%s: could not load full content for snippet", hit.KBID, hit.ItemID))
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%s/%s/%s: could not load full content for snippet", hit.Scope, hit.KBID, hit.ItemID))
 			continue
 		}
 		item, err := backend.GetItem(ctx, kb, hit.ItemID)
 		if err != nil {
 			setFallbackSnippet(hit)
-			result.Warnings = append(result.Warnings, fmt.Sprintf("%s/%s: could not load full content for snippet: %v", hit.KBID, hit.ItemID, err))
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%s/%s/%s: could not load full content for snippet: %v", hit.Scope, hit.KBID, hit.ItemID, err))
 			continue
 		}
 		snippet := snippetAroundQuery(item.Content, query)
@@ -499,6 +500,13 @@ func (s *Service) withSearchSnippets(ctx context.Context, query string, result S
 		hit.ContentPreview = snippet
 	}
 	return result
+}
+
+func stampScope(scope string, hits []core.SearchHit) []core.SearchHit {
+	for i := range hits {
+		hits[i].Scope = scope
+	}
+	return hits
 }
 
 func setFallbackSnippet(hit *core.SearchHit) {
