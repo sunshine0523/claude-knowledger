@@ -10,12 +10,23 @@ import (
 
 func newIndexCommand(svc *service.Service) *cobra.Command {
 	var kbID string
-	var rebuild bool
+	var rebuild, all bool
 	cmd := &cobra.Command{
 		Use:   "index",
 		Short: "Backfill or rebuild semantic indexes",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			result, err := svc.IndexKnowledge(context.Background(), service.IndexKnowledgeInput{KBID: kbID, Rebuild: rebuild})
+			input := service.IndexKnowledgeInput{KBID: kbID, Rebuild: rebuild}
+			if all {
+				input.Scope = ""
+				input.KBID = ""
+			} else {
+				scope, err := EffectiveScope(ScopeFlagValue(), svc != nil && svc.HasProjectScope())
+				if err != nil {
+					return err
+				}
+				input.Scope = scope
+			}
+			result, err := svc.IndexKnowledge(context.Background(), input)
 			if err != nil {
 				return err
 			}
@@ -24,5 +35,6 @@ func newIndexCommand(svc *service.Service) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&kbID, "kb", "", "knowledge base id")
 	cmd.Flags().BoolVar(&rebuild, "rebuild", false, "delete existing semantic vectors before indexing")
+	cmd.Flags().BoolVar(&all, "all", false, "index all knowledge bases across all scopes")
 	return cmd
 }
