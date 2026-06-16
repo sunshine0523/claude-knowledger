@@ -366,7 +366,7 @@ func TestManagedServiceAllowsMultipleSQLitePaths(t *testing.T) {
 	if _, err := svc.CreateKnowledgeBase(context.Background(), service.CreateKnowledgeBaseInput{ID: "other", StoreType: "sqlite", Path: otherPath}); err != nil {
 		t.Fatalf("expected different sqlite path to succeed, got %v", err)
 	}
-	runtimeItems, err := reg.RuntimeItems()
+	runtimeItems, err := reg.RuntimeItems(core.ScopeGlobal)
 	if err != nil {
 		t.Fatalf("RuntimeItems returned error: %v", err)
 	}

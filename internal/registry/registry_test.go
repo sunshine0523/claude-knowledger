@@ -60,7 +60,7 @@ func TestFileStoreMalformedJSONReturnsError(t *testing.T) {
 func TestRegistryCreatesRuntimeKnowledgeBase(t *testing.T) {
 	r := registry.New(nil, registry.NewMemoryStore(nil), nil, "")
 
-	if err := r.Create(registry.RuntimeKnowledgeBase{ID: "docs", Name: "Docs", StoreType: "text", StoreConfig: map[string]any{"path": "./docs"}, Enabled: true}); err != nil {
+	if err := r.Create(core.ScopeGlobal, registry.RuntimeKnowledgeBase{ID: "docs", Name: "Docs", StoreType: "text", StoreConfig: map[string]any{"path": "./docs"}, Enabled: true}); err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
 
@@ -77,14 +77,14 @@ func TestRegistryRejectsDuplicateCreate(t *testing.T) {
 	static := []config.KnowledgeBaseConfig{{ID: "docs", StoreType: "text", StoreConfig: map[string]any{"path": "./docs"}, Enabled: true}}
 	r := registry.New(static, registry.NewMemoryStore(nil), nil, "")
 
-	if err := r.Create(registry.RuntimeKnowledgeBase{ID: "docs", StoreType: "text", StoreConfig: map[string]any{"path": "./other"}, Enabled: true}); err == nil {
+	if err := r.Create(core.ScopeGlobal, registry.RuntimeKnowledgeBase{ID: "docs", StoreType: "text", StoreConfig: map[string]any{"path": "./other"}, Enabled: true}); err == nil {
 		t.Fatalf("expected duplicate static create to fail")
 	}
 
-	if err := r.Create(registry.RuntimeKnowledgeBase{ID: "notes", StoreType: "text", StoreConfig: map[string]any{"path": "./notes"}, Enabled: true}); err != nil {
+	if err := r.Create(core.ScopeGlobal, registry.RuntimeKnowledgeBase{ID: "notes", StoreType: "text", StoreConfig: map[string]any{"path": "./notes"}, Enabled: true}); err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
-	if err := r.Create(registry.RuntimeKnowledgeBase{ID: "notes", StoreType: "text", StoreConfig: map[string]any{"path": "./notes2"}, Enabled: true}); err == nil {
+	if err := r.Create(core.ScopeGlobal, registry.RuntimeKnowledgeBase{ID: "notes", StoreType: "text", StoreConfig: map[string]any{"path": "./notes2"}, Enabled: true}); err == nil {
 		t.Fatalf("expected duplicate runtime create to fail")
 	}
 }
@@ -93,7 +93,7 @@ func TestRegistryDeletesRuntimeKnowledgeBaseOnly(t *testing.T) {
 	static := []config.KnowledgeBaseConfig{{ID: "static", StoreType: "text", StoreConfig: map[string]any{"path": "./static"}, Enabled: true}}
 	r := registry.New(static, registry.NewMemoryStore([]registry.RuntimeKnowledgeBase{{ID: "runtime", StoreType: "text", StoreConfig: map[string]any{"path": "./runtime"}, Enabled: true}}), nil, "")
 
-	if err := r.Delete("runtime"); err != nil {
+	if err := r.Delete(core.ScopeGlobal, "runtime"); err != nil {
 		t.Fatalf("Delete runtime returned error: %v", err)
 	}
 	items, err := r.List()
@@ -103,7 +103,7 @@ func TestRegistryDeletesRuntimeKnowledgeBaseOnly(t *testing.T) {
 	if len(items) != 1 || items[0].ID != "static" {
 		t.Fatalf("expected only static item after delete, got %#v", items)
 	}
-	if err := r.Delete("static"); err == nil {
+	if err := r.Delete(core.ScopeGlobal, "static"); err == nil {
 		t.Fatalf("expected static delete to fail")
 	}
 }
@@ -119,7 +119,7 @@ func TestRegistryDeleteRuntimeOverrideRevealsStaticKnowledgeBase(t *testing.T) {
 	if len(items) != 1 || items[0].Source != registry.SourceRuntime {
 		t.Fatalf("expected runtime override before delete, got %#v", items)
 	}
-	if err := r.Delete("docs"); err != nil {
+	if err := r.Delete(core.ScopeGlobal, "docs"); err != nil {
 		t.Fatalf("Delete runtime override returned error: %v", err)
 	}
 	items, err = r.ListWithSources()
@@ -169,7 +169,7 @@ func TestRegistryMergesStaticAndRuntimeKnowledgeBases(t *testing.T) {
 		t.Fatalf("expected 2 knowledge bases, got %d", len(items))
 	}
 
-	if err := r.SetEnabled("notes", false); err != nil {
+	if err := r.SetEnabled(core.ScopeGlobal, "notes", false); err != nil {
 		t.Fatalf("SetEnabled returned error: %v", err)
 	}
 
@@ -214,5 +214,63 @@ func TestRegistryListWithSourcesMergesAcrossScopes(t *testing.T) {
 	}
 	if len(scopesForShared) != 2 {
 		t.Fatalf("expected two `shared` records (project+global), got %v", scopesForShared)
+	}
+}
+
+func TestRegistryCreateRoutesByScope(t *testing.T) {
+	globalStore := registry.NewMemoryStore(nil)
+	projectStore := registry.NewMemoryStore(nil)
+	r := registry.New(nil, globalStore, projectStore, "/tmp/proj")
+
+	if err := r.Create(core.ScopeGlobal, registry.RuntimeKnowledgeBase{ID: "g1", StoreType: "text", StoreConfig: map[string]any{"path": "./g"}, Enabled: true}); err != nil {
+		t.Fatalf("global Create: %v", err)
+	}
+	if err := r.Create(core.ScopeProject, registry.RuntimeKnowledgeBase{ID: "p1", StoreType: "text", StoreConfig: map[string]any{"path": "./p"}, Enabled: true}); err != nil {
+		t.Fatalf("project Create: %v", err)
+	}
+
+	g, _ := globalStore.List()
+	if len(g) != 1 || g[0].ID != "g1" {
+		t.Fatalf("global store should contain g1, got %#v", g)
+	}
+	p, _ := projectStore.List()
+	if len(p) != 1 || p[0].ID != "p1" {
+		t.Fatalf("project store should contain p1, got %#v", p)
+	}
+}
+
+func TestRegistryCreateProjectFailsWithoutProjectStore(t *testing.T) {
+	r := registry.New(nil, registry.NewMemoryStore(nil), nil, "")
+	err := r.Create(core.ScopeProject, registry.RuntimeKnowledgeBase{ID: "x", StoreType: "text", StoreConfig: map[string]any{"path": "./x"}, Enabled: true})
+	if err == nil {
+		t.Fatalf("expected error creating project KB without project store")
+	}
+}
+
+func TestRegistryAllowsSameIDAcrossScopes(t *testing.T) {
+	r := registry.New(nil, registry.NewMemoryStore(nil), registry.NewMemoryStore(nil), "/tmp/proj")
+	if err := r.Create(core.ScopeGlobal, registry.RuntimeKnowledgeBase{ID: "notes", StoreType: "text", StoreConfig: map[string]any{"path": "./g"}, Enabled: true}); err != nil {
+		t.Fatalf("global Create: %v", err)
+	}
+	if err := r.Create(core.ScopeProject, registry.RuntimeKnowledgeBase{ID: "notes", StoreType: "text", StoreConfig: map[string]any{"path": "./p"}, Enabled: true}); err != nil {
+		t.Fatalf("project Create with same id should succeed: %v", err)
+	}
+}
+
+func TestRegistryDeleteScopedRoutesCorrectly(t *testing.T) {
+	globalStore := registry.NewMemoryStore([]registry.RuntimeKnowledgeBase{{ID: "shared", StoreType: "text", StoreConfig: map[string]any{"path": "./g"}, Enabled: true}})
+	projectStore := registry.NewMemoryStore([]registry.RuntimeKnowledgeBase{{ID: "shared", StoreType: "text", StoreConfig: map[string]any{"path": "./p"}, Enabled: true}})
+	r := registry.New(nil, globalStore, projectStore, "/tmp/proj")
+
+	if err := r.Delete(core.ScopeProject, "shared"); err != nil {
+		t.Fatalf("project Delete: %v", err)
+	}
+	g, _ := globalStore.List()
+	if len(g) != 1 {
+		t.Fatalf("global store should be untouched, got %#v", g)
+	}
+	p, _ := projectStore.List()
+	if len(p) != 0 {
+		t.Fatalf("project store should be empty, got %#v", p)
 	}
 }

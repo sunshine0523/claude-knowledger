@@ -130,60 +130,111 @@ func (r *Registry) ListWithSources() ([]KnowledgeBaseRecord, error) {
 	return out, nil
 }
 
-func (r *Registry) Create(item RuntimeKnowledgeBase) error {
+func (r *Registry) storeForScope(scope string) (Store, error) {
+	switch scope {
+	case core.ScopeGlobal:
+		return r.globalStore, nil
+	case core.ScopeProject:
+		if r.projectStore == nil {
+			return nil, fmt.Errorf("not in a project directory; cannot operate on scope=project")
+		}
+		return r.projectStore, nil
+	default:
+		return nil, fmt.Errorf("unknown scope %q", scope)
+	}
+}
+
+func (r *Registry) Create(scope string, item RuntimeKnowledgeBase) error {
+	scope, err := core.NormalizeScope(scope)
+	if err != nil {
+		return err
+	}
 	if item.ID == "" {
 		return fmt.Errorf("knowledge base id is required")
 	}
-	existing, err := r.List()
+	store, err := r.storeForScope(scope)
 	if err != nil {
 		return err
 	}
-	for _, kb := range existing {
-		if kb.ID == item.ID {
+	if scope == core.ScopeGlobal {
+		for _, s := range r.static {
+			if s.ID == item.ID {
+				return fmt.Errorf("knowledge base %q already exists", item.ID)
+			}
+		}
+	}
+	existing, err := store.List()
+	if err != nil {
+		return err
+	}
+	for _, e := range existing {
+		if e.ID == item.ID {
 			return fmt.Errorf("knowledge base %q already exists", item.ID)
 		}
 	}
-	items, err := r.globalStore.List()
+	existing = append(existing, item)
+	return store.Save(existing)
+}
+
+func (r *Registry) Delete(scope, id string) error {
+	scope, err := core.NormalizeScope(scope)
 	if err != nil {
 		return err
 	}
-	items = append(items, item)
-	return r.globalStore.Save(items)
-}
-
-func (r *Registry) Delete(id string) error {
-	items, err := r.globalStore.List()
+	store, err := r.storeForScope(scope)
+	if err != nil {
+		return err
+	}
+	items, err := store.List()
 	if err != nil {
 		return err
 	}
 	for i := range items {
 		if items[i].ID == id {
 			items = append(items[:i], items[i+1:]...)
-			return r.globalStore.Save(items)
+			return store.Save(items)
 		}
 	}
-	for _, item := range r.static {
-		if item.ID == id {
-			return fmt.Errorf("knowledge base %q is defined in static config", id)
+	if scope == core.ScopeGlobal {
+		for _, s := range r.static {
+			if s.ID == id {
+				return fmt.Errorf("knowledge base %q is defined in static config", id)
+			}
 		}
 	}
-	return fmt.Errorf("knowledge base %q not found in runtime registry", id)
+	return fmt.Errorf("knowledge base %q not found in %s runtime registry", id, scope)
 }
 
-func (r *Registry) RuntimeItems() ([]RuntimeKnowledgeBase, error) {
-	return r.globalStore.List()
-}
-
-func (r *Registry) SetEnabled(id string, enabled bool) error {
-	items, err := r.globalStore.List()
+func (r *Registry) SetEnabled(scope, id string, enabled bool) error {
+	scope, err := core.NormalizeScope(scope)
+	if err != nil {
+		return err
+	}
+	store, err := r.storeForScope(scope)
+	if err != nil {
+		return err
+	}
+	items, err := store.List()
 	if err != nil {
 		return err
 	}
 	for i := range items {
 		if items[i].ID == id {
 			items[i].Enabled = enabled
-			return r.globalStore.Save(items)
+			return store.Save(items)
 		}
 	}
-	return fmt.Errorf("knowledge base %q not found in runtime registry", id)
+	return fmt.Errorf("knowledge base %q not found in %s runtime registry", id, scope)
+}
+
+func (r *Registry) RuntimeItems(scope string) ([]RuntimeKnowledgeBase, error) {
+	scope, err := core.NormalizeScope(scope)
+	if err != nil {
+		return nil, err
+	}
+	store, err := r.storeForScope(scope)
+	if err != nil {
+		return nil, err
+	}
+	return store.List()
 }

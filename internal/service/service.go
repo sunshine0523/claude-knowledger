@@ -283,7 +283,7 @@ func (s *Service) CreateKnowledgeBase(ctx context.Context, input CreateKnowledge
 	if err := closeBackends(prospectiveBackends); err != nil {
 		return registry.KnowledgeBaseRecord{}, err
 	}
-	if err := s.registry.Create(runtimeKB); err != nil {
+	if err := s.registry.Create(core.ScopeGlobal, runtimeKB); err != nil {
 		return registry.KnowledgeBaseRecord{}, err
 	}
 	if err := s.Reload(); err != nil {
@@ -306,7 +306,7 @@ func (s *Service) DeleteKnowledgeBase(ctx context.Context, id string) error {
 	if s.registry == nil || s.buildBackends == nil {
 		return fmt.Errorf("runtime registry is not available")
 	}
-	if err := s.registry.Delete(id); err != nil {
+	if err := s.registry.Delete(core.ScopeGlobal, id); err != nil {
 		return err
 	}
 	return s.Reload()
