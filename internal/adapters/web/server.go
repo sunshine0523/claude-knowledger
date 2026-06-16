@@ -96,15 +96,17 @@ const (
 )
 
 type searchRequest struct {
-	Query      string   `json:"query"`
-	Limit      *int     `json:"limit"`
-	KBIDs      []string `json:"kb_ids"`
-	SearchMode string   `json:"search_mode"`
+	Query      string            `json:"query"`
+	Limit      *int              `json:"limit"`
+	KBIDs      []json.RawMessage `json:"kb_ids"`
+	Scope      string            `json:"scope"`
+	SearchMode string            `json:"search_mode"`
 }
 
 type searchHitView struct {
 	ItemID         string         `json:"item_id"`
 	KBID           string         `json:"kb_id"`
+	Scope          string         `json:"scope"`
 	ItemType       string         `json:"item_type"`
 	Title          string         `json:"title"`
 	Snippet        string         `json:"snippet"`
@@ -374,7 +376,26 @@ func (s *Server) apiSearch(w http.ResponseWriter, r *http.Request) {
 	if searchMode == "" {
 		searchMode = "auto"
 	}
-	kbIDs := cleanKBIDs(req.KBIDs)
+	defaultScope := strings.TrimSpace(req.Scope)
+	if defaultScope == "" {
+		if s.svc.HasProjectScope() {
+			defaultScope = core.ScopeProject
+		} else {
+			defaultScope = core.ScopeGlobal
+		}
+	} else {
+		normalized, err := core.NormalizeScope(defaultScope)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, "invalid_scope", err.Error())
+			return
+		}
+		defaultScope = normalized
+	}
+	kbIDs, err := parseSearchKBIDs(req.KBIDs, defaultScope)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_kb_ids", err.Error())
+		return
+	}
 
 	result, err := s.svc.Search(r.Context(), core.SearchOptions{
 		Query:      query,
@@ -388,11 +409,10 @@ func (s *Server) apiSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hits := searchHitsToViews(result.Hits)
-	// TODO(plan-2): expose scope to search request and response.
 	writeAPISuccessWithMeta(
 		w,
 		http.StatusOK,
-		map[string]any{"query": query, "limit": limit, "kb_ids": kbIDs, "search_mode": searchMode, "hits": hits},
+		map[string]any{"query": query, "limit": limit, "kb_ids": kbIDs, "scope": defaultScope, "search_mode": searchMode, "hits": hits},
 		result.Warnings,
 		map[string]any{"hit_count": len(hits)},
 	)
@@ -474,16 +494,60 @@ func recordToView(record registry.KnowledgeBaseRecord) kbView {
 	}
 }
 
-func cleanKBIDs(ids []string) []core.ScopedKBRef {
-	out := make([]core.ScopedKBRef, 0, len(ids))
-	for _, raw := range ids {
-		id := strings.TrimSpace(raw)
+// parseSearchKBIDs accepts each kb_ids element as either:
+//   - a JSON object {"scope":"project","id":"notes"}
+//   - a JSON string "scope:id" (e.g. "project:notes") — scope optional
+//
+// Empty/whitespace strings are skipped. Bare strings without ":" use defaultScope.
+func parseSearchKBIDs(raws []json.RawMessage, defaultScope string) ([]core.ScopedKBRef, error) {
+	out := make([]core.ScopedKBRef, 0, len(raws))
+	for _, raw := range raws {
+		var asString string
+		if err := json.Unmarshal(raw, &asString); err == nil {
+			id := strings.TrimSpace(asString)
+			if id == "" {
+				continue
+			}
+			if strings.Contains(id, ":") {
+				parts := strings.SplitN(id, ":", 2)
+				scope, err := core.NormalizeScope(parts[0])
+				if err != nil {
+					return nil, fmt.Errorf("kb_ids %q: %w", id, err)
+				}
+				idPart := strings.TrimSpace(parts[1])
+				if idPart == "" {
+					return nil, fmt.Errorf("kb_ids %q: id is empty", id)
+				}
+				out = append(out, core.ScopedKBRef{Scope: scope, ID: idPart})
+				continue
+			}
+			out = append(out, core.ScopedKBRef{Scope: defaultScope, ID: id})
+			continue
+		}
+		var asObj struct {
+			Scope string `json:"scope"`
+			ID    string `json:"id"`
+		}
+		if err := json.Unmarshal(raw, &asObj); err != nil {
+			return nil, fmt.Errorf("kb_ids element must be string or object: %w", err)
+		}
+		id := strings.TrimSpace(asObj.ID)
 		if id == "" {
 			continue
 		}
-		out = append(out, core.ScopedKBRef{ID: id})
+		scope := strings.TrimSpace(asObj.Scope)
+		if scope == "" {
+			scope = defaultScope
+		} else {
+			normalized, err := core.NormalizeScope(scope)
+			if err != nil {
+				return nil, fmt.Errorf("kb_ids[%s]: %w", id, err)
+			}
+			scope = normalized
+		}
+		out = append(out, core.ScopedKBRef{Scope: scope, ID: id})
 	}
-	return out
+	return out, nil
 }
 
 func pathScope(r *http.Request) (string, error) {
@@ -509,6 +573,7 @@ func searchHitsToViews(hits []core.SearchHit) []searchHitView {
 		out = append(out, searchHitView{
 			ItemID:         hit.ItemID,
 			KBID:           hit.KBID,
+			Scope:          hit.Scope,
 			ItemType:       hit.ItemType,
 			Title:          hit.Title,
 			Snippet:        hit.Snippet,

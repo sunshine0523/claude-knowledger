@@ -330,8 +330,8 @@ func TestAPISearchReturnsHitsAndPassesOptions(t *testing.T) {
 	if fake.lastSearch.Limit != 5 {
 		t.Fatalf("expected limit 5, got %d", fake.lastSearch.Limit)
 	}
-	if !reflect.DeepEqual(fake.lastSearch.KBIDs, []core.ScopedKBRef{{ID: "default"}, {ID: "docs"}}) {
-		t.Fatalf("expected KBIDs [default docs], got %#v", fake.lastSearch.KBIDs)
+	if !reflect.DeepEqual(fake.lastSearch.KBIDs, []core.ScopedKBRef{{Scope: core.ScopeGlobal, ID: "default"}, {Scope: core.ScopeGlobal, ID: "docs"}}) {
+		t.Fatalf("expected KBIDs [global:default global:docs], got %#v", fake.lastSearch.KBIDs)
 	}
 	if fake.lastSearch.SearchMode != "hybrid" {
 		t.Fatalf("expected hybrid search mode, got %q", fake.lastSearch.SearchMode)
@@ -390,8 +390,8 @@ func TestAPISearchAcceptsAutoModeAndReturnsNormalizedRequest(t *testing.T) {
 	if fake.lastSearch.SearchMode != "auto" {
 		t.Fatalf("expected auto search mode, got %q", fake.lastSearch.SearchMode)
 	}
-	if !reflect.DeepEqual(fake.lastSearch.KBIDs, []core.ScopedKBRef{{ID: "default"}, {ID: "docs"}}) {
-		t.Fatalf("expected KBIDs [default docs], got %#v", fake.lastSearch.KBIDs)
+	if !reflect.DeepEqual(fake.lastSearch.KBIDs, []core.ScopedKBRef{{Scope: core.ScopeGlobal, ID: "default"}, {Scope: core.ScopeGlobal, ID: "docs"}}) {
+		t.Fatalf("expected KBIDs [global:default global:docs], got %#v", fake.lastSearch.KBIDs)
 	}
 
 	var payload struct {
@@ -417,8 +417,8 @@ func TestAPISearchAcceptsAutoModeAndReturnsNormalizedRequest(t *testing.T) {
 	if payload.Data.Limit != 10 {
 		t.Fatalf("expected default limit 10, got %d", payload.Data.Limit)
 	}
-	if !reflect.DeepEqual(payload.Data.KBIDs, []core.ScopedKBRef{{ID: "default"}, {ID: "docs"}}) {
-		t.Fatalf("expected response KBIDs [default docs], got %#v", payload.Data.KBIDs)
+	if !reflect.DeepEqual(payload.Data.KBIDs, []core.ScopedKBRef{{Scope: core.ScopeGlobal, ID: "default"}, {Scope: core.ScopeGlobal, ID: "docs"}}) {
+		t.Fatalf("expected response KBIDs [global:default global:docs], got %#v", payload.Data.KBIDs)
 	}
 	if payload.Data.SearchMode != "auto" {
 		t.Fatalf("expected response search mode auto, got %q", payload.Data.SearchMode)
@@ -426,6 +426,75 @@ func TestAPISearchAcceptsAutoModeAndReturnsNormalizedRequest(t *testing.T) {
 	if payload.Meta.HitCount != 0 {
 		t.Fatalf("expected hit_count 0, got %d", payload.Meta.HitCount)
 	}
+}
+
+func TestAPISearchAcceptsKBIDsObjectAndStringForms(t *testing.T) {
+	fake := &fakeWebService{searchResult: service.SearchResult{Hits: []core.SearchHit{{ItemID: "1", KBID: "notes", Scope: core.ScopeProject, Title: "T", Score: 1}}}}
+	srv := webadapter.NewServer(fake)
+	body := []byte(`{"query":"x","kb_ids":[{"scope":"project","id":"notes"},"global:default","plain"]}`)
+	res := serve(t, srv, http.MethodPost, "/api/search", body)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+	want := []core.ScopedKBRef{
+		{Scope: core.ScopeProject, ID: "notes"},
+		{Scope: core.ScopeGlobal, ID: "default"},
+		{Scope: core.ScopeGlobal, ID: "plain"},
+	}
+	if !reflect.DeepEqual(fake.lastSearch.KBIDs, want) {
+		t.Fatalf("expected %#v, got %#v", want, fake.lastSearch.KBIDs)
+	}
+	var payload struct {
+		Data struct {
+			Hits []struct {
+				ItemID string `json:"item_id"`
+				Scope  string `json:"scope"`
+			} `json:"hits"`
+		} `json:"data"`
+	}
+	decodeResponse(t, res, &payload)
+	if len(payload.Data.Hits) != 1 || payload.Data.Hits[0].Scope != core.ScopeProject {
+		t.Fatalf("expected hit scope=project, got %#v", payload.Data.Hits)
+	}
+}
+
+func TestAPISearchScopeDefaultsApplyToBareKBIDs(t *testing.T) {
+	fake := &fakeWebService{hasProjectScope: true, projectRoot: "/tmp/proj", searchResult: service.SearchResult{Hits: []core.SearchHit{}}}
+	srv := webadapter.NewServer(fake)
+	body := []byte(`{"query":"x","kb_ids":["notes"]}`)
+	res := serve(t, srv, http.MethodPost, "/api/search", body)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+	want := []core.ScopedKBRef{{Scope: core.ScopeProject, ID: "notes"}}
+	if !reflect.DeepEqual(fake.lastSearch.KBIDs, want) {
+		t.Fatalf("expected %#v, got %#v", want, fake.lastSearch.KBIDs)
+	}
+}
+
+func TestAPISearchExplicitScopeOverridesProjectMode(t *testing.T) {
+	fake := &fakeWebService{hasProjectScope: true, projectRoot: "/tmp/proj", searchResult: service.SearchResult{Hits: []core.SearchHit{}}}
+	srv := webadapter.NewServer(fake)
+	body := []byte(`{"query":"x","scope":"global","kb_ids":["notes"]}`)
+	res := serve(t, srv, http.MethodPost, "/api/search", body)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+	want := []core.ScopedKBRef{{Scope: core.ScopeGlobal, ID: "notes"}}
+	if !reflect.DeepEqual(fake.lastSearch.KBIDs, want) {
+		t.Fatalf("expected %#v, got %#v", want, fake.lastSearch.KBIDs)
+	}
+}
+
+func TestAPISearchRejectsInvalidScope(t *testing.T) {
+	fake := &fakeWebService{}
+	srv := webadapter.NewServer(fake)
+	body := []byte(`{"query":"x","scope":"bogus"}`)
+	res := serve(t, srv, http.MethodPost, "/api/search", body)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", res.Code, res.Body.String())
+	}
+	assertAPIErrorCode(t, res, "invalid_scope")
 }
 
 func TestAPIDashboardReturnsServiceUnavailableWithoutService(t *testing.T) {
