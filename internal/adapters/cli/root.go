@@ -22,6 +22,7 @@ func NewRootCommandWithAddressAndMCPRunner(svc *service.Service, address string,
 
 func NewRootCommandWithAddressAndRunners(svc *service.Service, address string, runMCP MCPRunner, runClaudeInstall ClaudeInstallRunner) *cobra.Command {
 	cmd := &cobra.Command{Use: "knowledger"}
+	cmd.PersistentFlags().StringVar(&scopeFlag, "scope", "", "knowledge base scope: project, global. Defaults to project when running in a project directory, else global.")
 	cmd.AddCommand(newSearchCommand(svc))
 	cmd.AddCommand(newGetCommand(svc))
 	cmd.AddCommand(newAddCommand(svc))
