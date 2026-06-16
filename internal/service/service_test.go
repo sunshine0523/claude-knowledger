@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -334,7 +335,7 @@ func TestManagedServiceCreatesAndDeletesRuntimeKnowledgeBase(t *testing.T) {
 		t.Fatalf("expected 2 KBs after create, got %#v", kbs)
 	}
 
-	if err := svc.DeleteKnowledgeBase(context.Background(), "docs"); err != nil {
+	if err := svc.DeleteKnowledgeBase(context.Background(), core.ScopeGlobal, "docs"); err != nil {
 		t.Fatalf("DeleteKnowledgeBase returned error: %v", err)
 	}
 	kbs = svc.ListKnowledgeBases()
@@ -349,7 +350,7 @@ func TestManagedServiceRejectsStaticDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManaged returned error: %v", err)
 	}
-	if err := svc.DeleteKnowledgeBase(context.Background(), "default"); err == nil {
+	if err := svc.DeleteKnowledgeBase(context.Background(), core.ScopeGlobal, "default"); err == nil {
 		t.Fatalf("expected static delete to fail")
 	}
 }
@@ -1054,5 +1055,72 @@ func TestServiceIndexKnowledgeRoutesByScope(t *testing.T) {
 	}
 	if len(calls) != 1 || calls[0].Scope != core.ScopeProject {
 		t.Fatalf("expected one MaintainIndex call to project notes, got %#v", calls)
+	}
+}
+
+func TestServiceCreateKnowledgeBaseHonoursScope(t *testing.T) {
+	tmp := t.TempDir()
+	projectStore := registry.NewMemoryStore(nil)
+	reg := registry.New(nil, registry.NewMemoryStore(nil), projectStore, tmp)
+	build := func(kbs []core.KnowledgeBase) (map[string]core.StoreBackend, error) {
+		return map[string]core.StoreBackend{"text": &scopeAwareFakeBackend{}}, nil
+	}
+	svc, err := service.NewManaged(reg, build)
+	if err != nil {
+		t.Fatalf("NewManaged: %v", err)
+	}
+	dataDir := filepath.Join(tmp, "kb-data")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	rec, err := svc.CreateKnowledgeBase(context.Background(), service.CreateKnowledgeBaseInput{
+		Scope:     core.ScopeProject,
+		ID:        "notes",
+		StoreType: "text",
+		Path:      dataDir,
+	})
+	if err != nil {
+		t.Fatalf("CreateKnowledgeBase: %v", err)
+	}
+	if rec.KnowledgeBase.Scope != core.ScopeProject {
+		t.Fatalf("expected returned record scope=project, got %q", rec.KnowledgeBase.Scope)
+	}
+	persisted, _ := projectStore.List()
+	if len(persisted) != 1 {
+		t.Fatalf("expected one persisted item in project store, got %d", len(persisted))
+	}
+}
+
+func TestServiceCreateKnowledgeBaseProjectFailsWithoutProjectStore(t *testing.T) {
+	reg := registry.New(nil, registry.NewMemoryStore(nil), nil, "")
+	build := func(kbs []core.KnowledgeBase) (map[string]core.StoreBackend, error) {
+		return map[string]core.StoreBackend{"text": &scopeAwareFakeBackend{}}, nil
+	}
+	svc, err := service.NewManaged(reg, build)
+	if err != nil {
+		t.Fatalf("NewManaged: %v", err)
+	}
+	if _, err := svc.CreateKnowledgeBase(context.Background(), service.CreateKnowledgeBaseInput{
+		Scope:     core.ScopeProject,
+		ID:        "notes",
+		StoreType: "text",
+		Path:      t.TempDir(),
+	}); err == nil {
+		t.Fatalf("expected error creating project KB without project store")
+	}
+}
+
+func TestServiceHasProjectScope(t *testing.T) {
+	regNo := registry.New(nil, registry.NewMemoryStore(nil), nil, "")
+	regYes := registry.New(nil, registry.NewMemoryStore(nil), registry.NewMemoryStore(nil), "/tmp/p")
+	build := func(kbs []core.KnowledgeBase) (map[string]core.StoreBackend, error) { return map[string]core.StoreBackend{}, nil }
+	svcNo, _ := service.NewManaged(regNo, build)
+	svcYes, _ := service.NewManaged(regYes, build)
+	if svcNo.HasProjectScope() {
+		t.Fatalf("expected HasProjectScope=false")
+	}
+	if !svcYes.HasProjectScope() {
+		t.Fatalf("expected HasProjectScope=true")
 	}
 }

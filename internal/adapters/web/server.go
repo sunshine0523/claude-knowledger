@@ -20,7 +20,7 @@ type webService interface {
 	ListKnowledgeItems(context.Context, string, string) ([]core.KnowledgeItem, error)
 	DeleteKnowledgeItem(context.Context, string, string, string) error
 	CreateKnowledgeBase(context.Context, service.CreateKnowledgeBaseInput) (registry.KnowledgeBaseRecord, error)
-	DeleteKnowledgeBase(context.Context, string) error
+	DeleteKnowledgeBase(context.Context, string, string) error
 	Search(context.Context, core.SearchOptions) (service.SearchResult, error)
 }
 
@@ -244,7 +244,7 @@ func (s *Server) apiDeleteKB(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "missing_id", "knowledge base id is required")
 		return
 	}
-	if err := s.svc.DeleteKnowledgeBase(r.Context(), id); err != nil {
+	if err := s.svc.DeleteKnowledgeBase(r.Context(), core.ScopeGlobal, id); err != nil { // TODO(plan-2): scope
 		writeAPIError(w, statusForError(err), codeForError(err), err.Error())
 		return
 	}

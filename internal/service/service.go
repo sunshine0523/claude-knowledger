@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -46,6 +47,7 @@ type IndexKnowledgeResult struct {
 type BackendBuilder func([]core.KnowledgeBase) (map[string]core.StoreBackend, error)
 
 type CreateKnowledgeBaseInput struct {
+	Scope           string
 	ID              string
 	Name            string
 	StoreType       string
@@ -267,21 +269,33 @@ func (s *Service) CreateKnowledgeBase(ctx context.Context, input CreateKnowledge
 	if s.registry == nil || s.buildBackends == nil {
 		return registry.KnowledgeBaseRecord{}, fmt.Errorf("runtime registry is not available")
 	}
+	scope, err := core.NormalizeScope(input.Scope)
+	if err != nil {
+		return registry.KnowledgeBaseRecord{}, err
+	}
+	if scope == core.ScopeProject && !s.registry.HasProjectStore() {
+		return registry.KnowledgeBaseRecord{}, &core.Error{Kind: core.ErrorKindConfig, Message: "not in a project directory; cannot create scope=project knowledge base"}
+	}
+	input.Scope = scope
 	runtimeKB, err := normalizeCreateInput(input)
 	if err != nil {
 		return registry.KnowledgeBaseRecord{}, err
 	}
 
-	existing, err := s.registry.List()
+	existing, err := s.registry.ListWithSources()
 	if err != nil {
 		return registry.KnowledgeBaseRecord{}, err
 	}
-	for _, kb := range existing {
-		if kb.ID == runtimeKB.ID {
+	for _, rec := range existing {
+		if rec.KnowledgeBase.ID == runtimeKB.ID && rec.KnowledgeBase.Scope == scope {
 			return registry.KnowledgeBaseRecord{}, fmt.Errorf("knowledge base %q already exists", runtimeKB.ID)
 		}
 	}
-	prospective := append(append([]core.KnowledgeBase(nil), existing...), runtimeToCore(runtimeKB))
+	prospective := make([]core.KnowledgeBase, 0, len(existing)+1)
+	for _, rec := range existing {
+		prospective = append(prospective, rec.KnowledgeBase)
+	}
+	prospective = append(prospective, runtimeToCoreScoped(runtimeKB, scope))
 	prospectiveBackends, err := s.buildBackends(prospective)
 	if err != nil {
 		return registry.KnowledgeBaseRecord{}, err
@@ -289,7 +303,7 @@ func (s *Service) CreateKnowledgeBase(ctx context.Context, input CreateKnowledge
 	if err := closeBackends(prospectiveBackends); err != nil {
 		return registry.KnowledgeBaseRecord{}, err
 	}
-	if err := s.registry.Create(core.ScopeGlobal, runtimeKB); err != nil {
+	if err := s.registry.Create(scope, runtimeKB); err != nil {
 		return registry.KnowledgeBaseRecord{}, err
 	}
 	if err := s.Reload(); err != nil {
@@ -300,22 +314,29 @@ func (s *Service) CreateKnowledgeBase(ctx context.Context, input CreateKnowledge
 		return registry.KnowledgeBaseRecord{}, err
 	}
 	for _, record := range records {
-		if record.KnowledgeBase.ID == runtimeKB.ID {
+		if record.KnowledgeBase.ID == runtimeKB.ID && record.KnowledgeBase.Scope == scope {
 			return record, nil
 		}
 	}
 	return registry.KnowledgeBaseRecord{}, fmt.Errorf("knowledge base %q not found after create", runtimeKB.ID)
 }
 
-func (s *Service) DeleteKnowledgeBase(ctx context.Context, id string) error {
+func (s *Service) DeleteKnowledgeBase(ctx context.Context, scope, id string) error {
 	_ = ctx
 	if s.registry == nil || s.buildBackends == nil {
 		return fmt.Errorf("runtime registry is not available")
 	}
-	if err := s.registry.Delete(core.ScopeGlobal, id); err != nil {
+	if err := s.registry.Delete(scope, id); err != nil {
 		return err
 	}
 	return s.Reload()
+}
+
+func (s *Service) HasProjectScope() bool {
+	if s.registry == nil {
+		return false
+	}
+	return s.registry.HasProjectStore()
 }
 
 func (s *Service) Reload() error {
@@ -412,55 +433,76 @@ func normalizeCreateInput(input CreateKnowledgeBaseInput) (registry.RuntimeKnowl
 	if input.StoreType != "text" && input.StoreType != "sqlite" {
 		return registry.RuntimeKnowledgeBase{}, fmt.Errorf("unsupported knowledge base store type %q", input.StoreType)
 	}
-	if input.Path == "" {
-		return registry.RuntimeKnowledgeBase{}, fmt.Errorf("knowledge base path is required")
-	}
-	path, err := config.ExpandHomePath(input.Path)
-	if err != nil {
-		return registry.RuntimeKnowledgeBase{}, err
-	}
+	scope, _ := core.NormalizeScope(input.Scope)
+	pathInput := strings.TrimSpace(input.Path)
 	enabled := true
 	if input.Enabled != nil {
 		enabled = *input.Enabled
 	}
-	if input.StoreType == "text" && enabled {
-		info, err := os.Stat(path)
+
+	storeConfig := map[string]any{}
+	if pathInput != "" {
+		path, err := config.ExpandHomePath(pathInput)
 		if err != nil {
-			return registry.RuntimeKnowledgeBase{}, fmt.Errorf("text knowledge base path %q is not available: %w", path, err)
+			return registry.RuntimeKnowledgeBase{}, err
 		}
-		if !info.IsDir() {
-			return registry.RuntimeKnowledgeBase{}, fmt.Errorf("text knowledge base path %q is not a directory", path)
+		// For project-scope KBs, only validate text directories when the path is absolute;
+		// relative paths are resolved against projectRoot at read time and the directory
+		// might not exist yet.
+		if input.StoreType == "text" && enabled && (scope == core.ScopeGlobal || filepath.IsAbs(path)) {
+			info, err := os.Stat(path)
+			if err != nil {
+				return registry.RuntimeKnowledgeBase{}, fmt.Errorf("text knowledge base path %q is not available: %w", path, err)
+			}
+			if !info.IsDir() {
+				return registry.RuntimeKnowledgeBase{}, fmt.Errorf("text knowledge base path %q is not a directory", path)
+			}
 		}
+		storeConfig["path"] = path
+	} else if scope == core.ScopeGlobal {
+		return registry.RuntimeKnowledgeBase{}, fmt.Errorf("knowledge base path is required")
 	}
+
 	name := input.Name
 	if name == "" {
 		name = input.ID
 	}
-	kb := config.KnowledgeBaseConfig{
+	cfg := config.KnowledgeBaseConfig{
 		ID:                input.ID,
 		Name:              name,
 		StoreType:         input.StoreType,
-		StoreConfig:       map[string]any{"path": path},
+		StoreConfig:       storeConfig,
 		Enabled:           enabled,
 		DefaultSearchMode: config.DefaultSearchMode,
 		Tags:              input.Tags,
 	}
-	if err := config.ApplyKnowledgeBaseDefaults(&kb); err != nil {
-		return registry.RuntimeKnowledgeBase{}, err
+	if scope == core.ScopeGlobal {
+		// Only apply global defaults eagerly; project KBs are normalised later by
+		// registry.applyProjectDefaults so the persisted form stays relative.
+		if err := config.ApplyKnowledgeBaseDefaults(&cfg); err != nil {
+			return registry.RuntimeKnowledgeBase{}, err
+		}
 	}
 	if input.StoreType == "sqlite" && input.SemanticEnabled != nil {
-		semantic, _ := kb.Indexing["semantic"].(map[string]any)
+		semantic, _ := cfg.Indexing["semantic"].(map[string]any)
+		if semantic == nil {
+			semantic = map[string]any{}
+			if cfg.Indexing == nil {
+				cfg.Indexing = map[string]any{}
+			}
+			cfg.Indexing["semantic"] = semantic
+		}
 		semantic["enabled"] = *input.SemanticEnabled
 	}
 	return registry.RuntimeKnowledgeBase{
-		ID:                kb.ID,
-		Name:              kb.Name,
-		StoreType:         kb.StoreType,
-		StoreConfig:       kb.StoreConfig,
-		Enabled:           kb.Enabled,
-		DefaultSearchMode: kb.DefaultSearchMode,
-		Indexing:          kb.Indexing,
-		Tags:              kb.Tags,
+		ID:                cfg.ID,
+		Name:              cfg.Name,
+		StoreType:         cfg.StoreType,
+		StoreConfig:       cfg.StoreConfig,
+		Enabled:           cfg.Enabled,
+		DefaultSearchMode: cfg.DefaultSearchMode,
+		Indexing:          cfg.Indexing,
+		Tags:              cfg.Tags,
 	}, nil
 }
 
@@ -468,6 +510,20 @@ func runtimeToCore(item registry.RuntimeKnowledgeBase) core.KnowledgeBase {
 	return core.KnowledgeBase{
 		ID:                item.ID,
 		Scope:             core.ScopeGlobal,
+		Name:              item.Name,
+		StoreType:         item.StoreType,
+		StoreConfig:       item.StoreConfig,
+		Enabled:           item.Enabled,
+		DefaultSearchMode: item.DefaultSearchMode,
+		Indexing:          item.Indexing,
+		Tags:              item.Tags,
+	}
+}
+
+func runtimeToCoreScoped(item registry.RuntimeKnowledgeBase, scope string) core.KnowledgeBase {
+	return core.KnowledgeBase{
+		ID:                item.ID,
+		Scope:             scope,
 		Name:              item.Name,
 		StoreType:         item.StoreType,
 		StoreConfig:       item.StoreConfig,

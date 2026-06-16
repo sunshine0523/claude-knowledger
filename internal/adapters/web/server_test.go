@@ -108,7 +108,7 @@ func (f *fakeWebService) CreateKnowledgeBase(_ context.Context, input service.Cr
 	return registry.KnowledgeBaseRecord{KnowledgeBase: core.KnowledgeBase{ID: input.ID, Name: input.Name, StoreType: input.StoreType, StoreConfig: map[string]any{"path": input.Path}, Enabled: true}, Source: registry.SourceRuntime, Deletable: true}, nil
 }
 
-func (f *fakeWebService) DeleteKnowledgeBase(context.Context, string) error {
+func (f *fakeWebService) DeleteKnowledgeBase(context.Context, string, string) error {
 	return nil
 }
 
