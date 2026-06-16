@@ -21,3 +21,8 @@ var scopeFlag string
 
 // ScopeFlagValue returns the current --scope flag value (may be "").
 func ScopeFlagValue() string { return scopeFlag }
+
+// ParseKBIDsForTest exposes parseKBIDs for tests in the cli_test package.
+func ParseKBIDsForTest(values []string, scopeFlag string, inProject bool) ([]core.ScopedKBRef, error) {
+	return parseKBIDs(values, scopeFlag, inProject)
+}
