@@ -48,6 +48,28 @@ type addKnowledgeItemInput struct {
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
+type deleteKnowledgeItemInput struct {
+	Scope  string `json:"scope,omitempty"`
+	KBID   string `json:"kb_id"`
+	ItemID string `json:"item_id"`
+}
+
+type createKnowledgeBaseInput struct {
+	Scope           string   `json:"scope,omitempty"`
+	ID              string   `json:"id"`
+	Name            string   `json:"name,omitempty"`
+	StoreType       string   `json:"store_type"`
+	Path            string   `json:"path,omitempty"`
+	Enabled         *bool    `json:"enabled,omitempty"`
+	SemanticEnabled *bool    `json:"semantic_enabled,omitempty"`
+	Tags            []string `json:"tags,omitempty"`
+}
+
+type deleteKnowledgeBaseInput struct {
+	Scope string `json:"scope,omitempty"`
+	ID    string `json:"id"`
+}
+
 type indexKnowledgeInput struct {
 	Scope   string `json:"scope,omitempty"`
 	KBID    string `json:"kb_id,omitempty"`
@@ -168,11 +190,48 @@ func (s *Server) registerTools() {
 		mcpgo.WithIdempotentHintAnnotation(false),
 		mcpgo.WithOpenWorldHintAnnotation(false),
 	)
+	deleteTool := mcpgo.NewTool(
+		"delete_knowledge_item",
+		mcpgo.WithDescription("Delete a knowledge item from a knowledge base."),
+		scopeProperty,
+		mcpgo.WithString("kb_id", mcpgo.Required(), mcpgo.Description("Knowledge base ID.")),
+		mcpgo.WithString("item_id", mcpgo.Required(), mcpgo.Description("Knowledge item ID.")),
+		mcpgo.WithReadOnlyHintAnnotation(false),
+		mcpgo.WithDestructiveHintAnnotation(true),
+		mcpgo.WithIdempotentHintAnnotation(true),
+		mcpgo.WithOpenWorldHintAnnotation(false),
+	)
 	listTool := mcpgo.NewTool(
 		"list_knowledge_bases",
 		mcpgo.WithDescription("List configured knowledge bases."),
 		mcpgo.WithReadOnlyHintAnnotation(true),
 		mcpgo.WithDestructiveHintAnnotation(false),
+		mcpgo.WithIdempotentHintAnnotation(true),
+		mcpgo.WithOpenWorldHintAnnotation(false),
+	)
+	createKBTool := mcpgo.NewTool(
+		"create_knowledge_base",
+		mcpgo.WithDescription("Create a new knowledge base. Path is required for global scope; for project scope a relative path is resolved against the project root."),
+		scopeProperty,
+		mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Knowledge base ID (letters, digits, underscore, dash, dot; max 64 chars).")),
+		mcpgo.WithString("name", mcpgo.Description("Human-readable name. Defaults to id.")),
+		mcpgo.WithString("store_type", mcpgo.Required(), mcpgo.Description("Backend store type."), mcpgo.Enum("text", "sqlite")),
+		mcpgo.WithString("path", mcpgo.Description("Storage path. Required for global scope; relative paths for project scope are resolved against the project root.")),
+		mcpgo.WithBoolean("enabled", mcpgo.Description("Whether the knowledge base is enabled. Defaults to true.")),
+		mcpgo.WithBoolean("semantic_enabled", mcpgo.Description("Enable semantic indexing for sqlite store types.")),
+		mcpgo.WithArray("tags", mcpgo.Description("Optional knowledge base tags."), mcpgo.WithStringItems()),
+		mcpgo.WithReadOnlyHintAnnotation(false),
+		mcpgo.WithDestructiveHintAnnotation(false),
+		mcpgo.WithIdempotentHintAnnotation(false),
+		mcpgo.WithOpenWorldHintAnnotation(false),
+	)
+	deleteKBTool := mcpgo.NewTool(
+		"delete_knowledge_base",
+		mcpgo.WithDescription("Delete a runtime-managed knowledge base. Static knowledge bases declared in config files cannot be deleted."),
+		scopeProperty,
+		mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Knowledge base ID.")),
+		mcpgo.WithReadOnlyHintAnnotation(false),
+		mcpgo.WithDestructiveHintAnnotation(true),
 		mcpgo.WithIdempotentHintAnnotation(true),
 		mcpgo.WithOpenWorldHintAnnotation(false),
 	)
@@ -188,11 +247,14 @@ func (s *Server) registerTools() {
 		mcpgo.WithOpenWorldHintAnnotation(false),
 	)
 
-	s.tools = []mcpgo.Tool{searchTool, getTool, addTool, listTool, indexTool}
+	s.tools = []mcpgo.Tool{searchTool, getTool, addTool, deleteTool, listTool, createKBTool, deleteKBTool, indexTool}
 	s.server.AddTool(searchTool, s.handleSearchKnowledge)
 	s.server.AddTool(getTool, s.handleGetKnowledgeItem)
 	s.server.AddTool(addTool, s.handleAddKnowledgeItem)
+	s.server.AddTool(deleteTool, s.handleDeleteKnowledgeItem)
 	s.server.AddTool(listTool, s.handleListKnowledgeBases)
+	s.server.AddTool(createKBTool, s.handleCreateKnowledgeBase)
+	s.server.AddTool(deleteKBTool, s.handleDeleteKnowledgeBase)
 	s.server.AddTool(indexTool, s.handleIndexKnowledge)
 }
 
@@ -281,6 +343,29 @@ func (s *Server) handleAddKnowledgeItem(ctx context.Context, request mcpgo.CallT
 	return mcpgo.NewToolResultStructuredOnly(map[string]any{"item": item, "ingestion_result": ingestionResult, "index_status": indexStatus}), nil
 }
 
+func (s *Server) handleDeleteKnowledgeItem(ctx context.Context, request mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	if s.svc == nil {
+		return mcpgo.NewToolResultError("service is not configured"), nil
+	}
+	var input deleteKnowledgeItemInput
+	if err := request.BindArguments(&input); err != nil {
+		return mcpgo.NewToolResultErrorFromErr("invalid arguments", err), nil
+	}
+	scope, err := s.defaultScope(input.Scope)
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	if err := s.svc.DeleteKnowledgeItem(ctx, scope, input.KBID, input.ItemID); err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	return mcpgo.NewToolResultStructuredOnly(map[string]any{
+		"deleted": true,
+		"scope":   scope,
+		"kb_id":   strings.TrimSpace(input.KBID),
+		"item_id": strings.TrimSpace(input.ItemID),
+	}), nil
+}
+
 func (s *Server) handleListKnowledgeBases(ctx context.Context, request mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	_ = ctx
 	_ = request
@@ -288,6 +373,60 @@ func (s *Server) handleListKnowledgeBases(ctx context.Context, request mcpgo.Cal
 		return mcpgo.NewToolResultError("service is not configured"), nil
 	}
 	return mcpgo.NewToolResultStructuredOnly(map[string]any{"knowledge_bases": s.svc.ListKnowledgeBases()}), nil
+}
+
+func (s *Server) handleCreateKnowledgeBase(ctx context.Context, request mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	if s.svc == nil {
+		return mcpgo.NewToolResultError("service is not configured"), nil
+	}
+	var input createKnowledgeBaseInput
+	if err := request.BindArguments(&input); err != nil {
+		return mcpgo.NewToolResultErrorFromErr("invalid arguments", err), nil
+	}
+	scope, err := s.defaultScope(input.Scope)
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	record, err := s.svc.CreateKnowledgeBase(ctx, service.CreateKnowledgeBaseInput{
+		Scope:           scope,
+		ID:              strings.TrimSpace(input.ID),
+		Name:            strings.TrimSpace(input.Name),
+		StoreType:       strings.TrimSpace(input.StoreType),
+		Path:            input.Path,
+		Enabled:         input.Enabled,
+		SemanticEnabled: input.SemanticEnabled,
+		Tags:            input.Tags,
+	})
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	return mcpgo.NewToolResultStructuredOnly(map[string]any{"knowledge_base": record}), nil
+}
+
+func (s *Server) handleDeleteKnowledgeBase(ctx context.Context, request mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	if s.svc == nil {
+		return mcpgo.NewToolResultError("service is not configured"), nil
+	}
+	var input deleteKnowledgeBaseInput
+	if err := request.BindArguments(&input); err != nil {
+		return mcpgo.NewToolResultErrorFromErr("invalid arguments", err), nil
+	}
+	scope, err := s.defaultScope(input.Scope)
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	id := strings.TrimSpace(input.ID)
+	if id == "" {
+		return mcpgo.NewToolResultError("knowledge base id is required"), nil
+	}
+	if err := s.svc.DeleteKnowledgeBase(ctx, scope, id); err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	return mcpgo.NewToolResultStructuredOnly(map[string]any{
+		"deleted": true,
+		"scope":   scope,
+		"id":      id,
+	}), nil
 }
 
 func (s *Server) handleIndexKnowledge(ctx context.Context, request mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {

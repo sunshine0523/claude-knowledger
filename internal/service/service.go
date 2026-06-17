@@ -63,6 +63,8 @@ type Service struct {
 	backends       map[string]core.StoreBackend
 	registry       *registry.Registry
 	buildBackends  BackendBuilder
+	refreshMu      sync.Mutex
+	lastSignature  string
 }
 
 var knowledgeBaseIDPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
@@ -91,6 +93,7 @@ func NewManaged(reg *registry.Registry, buildBackends BackendBuilder) (*Service,
 }
 
 func (s *Service) Search(ctx context.Context, opt core.SearchOptions) (SearchResult, error) {
+	s.refreshIfChangedSilently()
 	kbs, backends := s.snapshot()
 	result := SearchResult{}
 	for _, kb := range kbs {
@@ -130,6 +133,7 @@ func (s *Service) Search(ctx context.Context, opt core.SearchOptions) (SearchRes
 }
 
 func (s *Service) Add(ctx context.Context, input core.AddInput) (core.KnowledgeItem, core.IngestionResult, core.IndexStatus, error) {
+	s.refreshIfChangedSilently()
 	kb, backend, err := s.backendFor(input.Scope, input.KBID)
 	if err != nil {
 		return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, err
@@ -138,6 +142,7 @@ func (s *Service) Add(ctx context.Context, input core.AddInput) (core.KnowledgeI
 }
 
 func (s *Service) IndexKnowledge(ctx context.Context, input IndexKnowledgeInput) (IndexKnowledgeResult, error) {
+	s.refreshIfChangedSilently()
 	kbs, backends := s.snapshot()
 	kbID := strings.TrimSpace(input.KBID)
 	scopeFilter := strings.TrimSpace(input.Scope)
@@ -186,12 +191,14 @@ func (s *Service) IndexKnowledge(ctx context.Context, input IndexKnowledgeInput)
 }
 
 func (s *Service) ListKnowledgeBases() []core.KnowledgeBase {
+	s.refreshIfChangedSilently()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return append([]core.KnowledgeBase(nil), s.knowledgeBases...)
 }
 
 func (s *Service) ListKnowledgeBaseRecords() ([]registry.KnowledgeBaseRecord, error) {
+	s.refreshIfChangedSilently()
 	if s.registry == nil {
 		kbs := s.ListKnowledgeBases()
 		records := make([]registry.KnowledgeBaseRecord, 0, len(kbs))
@@ -204,6 +211,7 @@ func (s *Service) ListKnowledgeBaseRecords() ([]registry.KnowledgeBaseRecord, er
 }
 
 func (s *Service) ListKnowledgeBaseSummaries(ctx context.Context) ([]KnowledgeBaseSummary, error) {
+	s.refreshIfChangedSilently()
 	records, err := s.ListKnowledgeBaseRecords()
 	if err != nil {
 		return nil, err
@@ -221,6 +229,7 @@ func (s *Service) ListKnowledgeBaseSummaries(ctx context.Context) ([]KnowledgeBa
 }
 
 func (s *Service) ListKnowledgeItems(ctx context.Context, scope, kbID string) ([]core.KnowledgeItem, error) {
+	s.refreshIfChangedSilently()
 	kbID = strings.TrimSpace(kbID)
 	if kbID == "" {
 		return nil, &core.Error{Kind: core.ErrorKindConfig, Message: "knowledge base id is required"}
@@ -233,6 +242,7 @@ func (s *Service) ListKnowledgeItems(ctx context.Context, scope, kbID string) ([
 }
 
 func (s *Service) GetKnowledgeItem(ctx context.Context, scope, kbID, itemID string) (core.KnowledgeItem, error) {
+	s.refreshIfChangedSilently()
 	kbID = strings.TrimSpace(kbID)
 	itemID = strings.TrimSpace(itemID)
 	if kbID == "" {
@@ -249,6 +259,7 @@ func (s *Service) GetKnowledgeItem(ctx context.Context, scope, kbID, itemID stri
 }
 
 func (s *Service) DeleteKnowledgeItem(ctx context.Context, scope, kbID, itemID string) error {
+	s.refreshIfChangedSilently()
 	kbID = strings.TrimSpace(kbID)
 	itemID = strings.TrimSpace(itemID)
 	if kbID == "" {
@@ -269,6 +280,7 @@ func (s *Service) CreateKnowledgeBase(ctx context.Context, input CreateKnowledge
 	if s.registry == nil || s.buildBackends == nil {
 		return registry.KnowledgeBaseRecord{}, fmt.Errorf("runtime registry is not available")
 	}
+	s.refreshIfChangedSilently()
 	scope, err := core.NormalizeScope(input.Scope)
 	if err != nil {
 		return registry.KnowledgeBaseRecord{}, err
@@ -363,11 +375,52 @@ func (s *Service) Reload() error {
 	if err != nil {
 		return err
 	}
+	signature, sigErr := s.registry.Signature()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.knowledgeBases = append([]core.KnowledgeBase(nil), kbs...)
 	s.backends = copyBackends(backends)
+	if sigErr == nil {
+		s.lastSignature = signature
+	}
+	s.mu.Unlock()
 	return nil
+}
+
+// RefreshIfChanged stat's the registry stores; if their composite signature
+// changed since the last reload (e.g. another process rewrote the registry
+// file), Reload is invoked. Cheap when nothing changed (just a couple of
+// os.Stat calls), so it is safe to invoke from hot read paths.
+func (s *Service) RefreshIfChanged() error {
+	if s.registry == nil || s.buildBackends == nil {
+		return nil
+	}
+	signature, err := s.registry.Signature()
+	if err != nil {
+		return err
+	}
+	s.mu.RLock()
+	current := s.lastSignature
+	s.mu.RUnlock()
+	if signature == current {
+		return nil
+	}
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+	// Re-check after taking the refresh lock so concurrent callers don't all reload.
+	s.mu.RLock()
+	current = s.lastSignature
+	s.mu.RUnlock()
+	if signature == current {
+		return nil
+	}
+	return s.Reload()
+}
+
+// refreshIfChangedSilently invokes RefreshIfChanged for callers that cannot
+// surface refresh errors. A refresh failure should not break a read path:
+// stale snapshots are still preferable to a hard error.
+func (s *Service) refreshIfChangedSilently() {
+	_ = s.RefreshIfChanged()
 }
 
 func (s *Service) Close() error {

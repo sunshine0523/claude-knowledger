@@ -1146,3 +1146,91 @@ func TestServiceProjectRoot(t *testing.T) {
 		t.Fatalf("expected /tmp/proj, got %q", svcYes.ProjectRoot())
 	}
 }
+
+// TestServiceRefreshesWhenRegistryFileChangesExternally simulates the
+// MCP-vs-Web cross-process scenario: a second process writes the runtime
+// registry file directly while the Service is alive. Without
+// RefreshIfChanged, search/list/add against the new KB would all fail
+// until the process restarts.
+func TestServiceRefreshesWhenRegistryFileChangesExternally(t *testing.T) {
+	registryPath := filepath.Join(t.TempDir(), "registry.json")
+	store := registry.NewFileStore(registryPath)
+	reg := registry.New(nil, store, nil, "")
+
+	var buildCalls int
+	build := func(kbs []core.KnowledgeBase) (map[string]core.StoreBackend, error) {
+		buildCalls++
+		return map[string]core.StoreBackend{"text": fakeBackend{}, "sqlite": fakeBackend{}}, nil
+	}
+	svc, err := service.NewManaged(reg, build)
+	if err != nil {
+		t.Fatalf("NewManaged returned error: %v", err)
+	}
+	if got := len(svc.ListKnowledgeBases()); got != 0 {
+		t.Fatalf("expected empty registry at startup, got %d", got)
+	}
+	initialBuilds := buildCalls
+
+	// Simulate a second process writing the registry file directly.
+	external := registry.NewFileStore(registryPath)
+	if err := external.Save([]registry.RuntimeKnowledgeBase{{
+		ID: "notes", Name: "Notes", StoreType: "text",
+		StoreConfig: map[string]any{"path": t.TempDir()}, Enabled: true,
+	}}); err != nil {
+		t.Fatalf("external Save returned error: %v", err)
+	}
+
+	// FileStore.Version derives from mtime+size; on filesystems with
+	// 1-second mtime resolution, two writes within the same second can share
+	// a token. The fresh file we just created has a unique size, but be
+	// defensive in case the test runs against an older snapshot.
+	gotKBs := svc.ListKnowledgeBases()
+	if len(gotKBs) != 1 || gotKBs[0].ID != "notes" {
+		t.Fatalf("expected ListKnowledgeBases to surface the externally-added KB, got %#v", gotKBs)
+	}
+	if buildCalls == initialBuilds {
+		t.Fatalf("expected buildBackends to run during refresh; calls=%d", buildCalls)
+	}
+
+	// Subsequent calls without further changes must not rebuild backends.
+	stableBuilds := buildCalls
+	_ = svc.ListKnowledgeBases()
+	_ = svc.ListKnowledgeBases()
+	if buildCalls != stableBuilds {
+		t.Fatalf("expected no extra rebuilds when signature unchanged; before=%d after=%d", stableBuilds, buildCalls)
+	}
+
+	// Add against the freshly-discovered KB should succeed without an
+	// explicit Reload — this covers the MCP "kb just appeared" path.
+	if _, _, _, err := svc.Add(context.Background(), core.AddInput{KBID: "notes", Scope: core.ScopeGlobal, Title: "t", Content: "c"}); err != nil {
+		t.Fatalf("Add against externally-added KB returned error: %v", err)
+	}
+}
+
+// TestServiceRefreshIfChangedNoOpWhenUnchanged confirms the cheap path: if
+// the registry signature hasn't moved, RefreshIfChanged must not rebuild
+// backends. Important because we wire it into hot read paths.
+func TestServiceRefreshIfChangedNoOpWhenUnchanged(t *testing.T) {
+	registryPath := filepath.Join(t.TempDir(), "registry.json")
+	reg := registry.New(nil, registry.NewFileStore(registryPath), nil, "")
+
+	var buildCalls int
+	build := func(kbs []core.KnowledgeBase) (map[string]core.StoreBackend, error) {
+		buildCalls++
+		return map[string]core.StoreBackend{"text": fakeBackend{}}, nil
+	}
+	svc, err := service.NewManaged(reg, build)
+	if err != nil {
+		t.Fatalf("NewManaged returned error: %v", err)
+	}
+	baseline := buildCalls
+
+	for i := 0; i < 5; i++ {
+		if err := svc.RefreshIfChanged(); err != nil {
+			t.Fatalf("RefreshIfChanged returned error: %v", err)
+		}
+	}
+	if buildCalls != baseline {
+		t.Fatalf("expected no rebuilds when registry unchanged; baseline=%d after=%d", baseline, buildCalls)
+	}
+}

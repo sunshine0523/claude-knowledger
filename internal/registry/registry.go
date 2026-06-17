@@ -52,6 +52,25 @@ func (r *Registry) ProjectRoot() string {
 	return r.projectRoot
 }
 
+// Signature returns a token that changes whenever the underlying runtime
+// stores change, including changes made by other processes that write the
+// same backing file. Callers cache the value and compare against a fresh
+// Signature() to decide whether to reload.
+func (r *Registry) Signature() (string, error) {
+	globalVer, err := r.globalStore.Version()
+	if err != nil {
+		return "", err
+	}
+	projectVer := ""
+	if r.projectStore != nil {
+		projectVer, err = r.projectStore.Version()
+		if err != nil {
+			return "", err
+		}
+	}
+	return "g=" + globalVer + "|p=" + projectVer, nil
+}
+
 func staticToCore(item config.KnowledgeBaseConfig) core.KnowledgeBase {
 	return core.KnowledgeBase{
 		ID:                item.ID,

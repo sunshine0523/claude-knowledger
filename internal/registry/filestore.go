@@ -44,6 +44,23 @@ func (f *FileStore) List() ([]RuntimeKnowledgeBase, error) {
 	return out, nil
 }
 
+// Version returns mtime+size of the file as a stable token. When the file
+// does not exist yet, an empty string is returned so callers treat
+// "missing" as a distinct state instead of erroring. The token changes
+// whenever Save writes new content, including writes performed by
+// another process sharing the same file.
+func (f *FileStore) Version() (string, error) {
+	info, err := os.Stat(f.path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		return "", err
+	}
+	mod := info.ModTime()
+	return fmt.Sprintf("%d.%09d-%d", mod.Unix(), mod.Nanosecond(), info.Size()), nil
+}
+
 func (f *FileStore) Save(items []RuntimeKnowledgeBase) error {
 	if err := os.MkdirAll(filepath.Dir(f.path), 0o755); err != nil {
 		return err

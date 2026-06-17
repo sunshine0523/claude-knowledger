@@ -55,7 +55,7 @@ func (b *indexToolBackend) MaintainIndex(_ context.Context, _ core.KnowledgeBase
 func TestNewServerRegistersKnowledgeToolsInOrder(t *testing.T) {
 	server := mcpadapter.NewServer(nil)
 	tools := server.Tools()
-	want := []string{"search_knowledge", "get_knowledge_item", "add_knowledge_item", "list_knowledge_bases", "index_knowledge"}
+	want := []string{"search_knowledge", "get_knowledge_item", "add_knowledge_item", "delete_knowledge_item", "list_knowledge_bases", "create_knowledge_base", "delete_knowledge_base", "index_knowledge"}
 	if len(tools) != len(want) {
 		t.Fatalf("expected %d tools, got %d", len(want), len(tools))
 	}
@@ -97,6 +97,57 @@ func TestAddKnowledgeItemSchema(t *testing.T) {
 	for _, prop := range []string{"tags", "metadata"} {
 		if _, ok := tool.InputSchema.Properties[prop]; !ok {
 			t.Fatalf("expected add_knowledge_item schema to have %q property", prop)
+		}
+	}
+}
+
+func TestDeleteKnowledgeItemSchema(t *testing.T) {
+	tool := findTool(t, mcpadapter.NewServer(nil).Tools(), "delete_knowledge_item")
+	for _, required := range []string{"kb_id", "item_id"} {
+		if !hasRequired(tool, required) {
+			t.Fatalf("expected delete_knowledge_item to require %q", required)
+		}
+	}
+	if _, ok := tool.InputSchema.Properties["scope"]; !ok {
+		t.Fatalf("expected delete_knowledge_item to expose scope property")
+	}
+	for _, required := range tool.InputSchema.Required {
+		if required == "scope" {
+			t.Fatalf("scope must be optional on delete_knowledge_item")
+		}
+	}
+}
+
+func TestCreateKnowledgeBaseSchema(t *testing.T) {
+	tool := findTool(t, mcpadapter.NewServer(nil).Tools(), "create_knowledge_base")
+	for _, required := range []string{"id", "store_type"} {
+		if !hasRequired(tool, required) {
+			t.Fatalf("expected create_knowledge_base to require %q", required)
+		}
+	}
+	for _, prop := range []string{"scope", "name", "path", "enabled", "semantic_enabled", "tags"} {
+		if _, ok := tool.InputSchema.Properties[prop]; !ok {
+			t.Fatalf("expected create_knowledge_base schema to have %q property", prop)
+		}
+	}
+	for _, required := range tool.InputSchema.Required {
+		if required == "scope" {
+			t.Fatalf("scope must be optional on create_knowledge_base")
+		}
+	}
+}
+
+func TestDeleteKnowledgeBaseSchema(t *testing.T) {
+	tool := findTool(t, mcpadapter.NewServer(nil).Tools(), "delete_knowledge_base")
+	if !hasRequired(tool, "id") {
+		t.Fatalf("expected delete_knowledge_base to require id")
+	}
+	if _, ok := tool.InputSchema.Properties["scope"]; !ok {
+		t.Fatalf("expected delete_knowledge_base to expose scope property")
+	}
+	for _, required := range tool.InputSchema.Required {
+		if required == "scope" {
+			t.Fatalf("scope must be optional on delete_knowledge_base")
 		}
 	}
 }
@@ -211,6 +262,38 @@ func TestMCPHandlersRoundTripThroughService(t *testing.T) {
 	}
 	if _, ok := structured["knowledge_bases"]; !ok {
 		t.Fatalf("expected list structured content to include knowledge_bases")
+	}
+
+	deleteRequest := mcp.CallToolRequest{}
+	deleteRequest.Params.Name = "delete_knowledge_item"
+	deleteRequest.Params.Arguments = map[string]any{"kb_id": "docs", "item_id": itemID}
+	deleteResult, err := client.CallTool(ctx, deleteRequest)
+	if err != nil {
+		t.Fatalf("call delete_knowledge_item: %v", err)
+	}
+	if deleteResult.IsError {
+		t.Fatalf("expected delete_knowledge_item success, got %q", firstTextContent(t, deleteResult.Content))
+	}
+	deletePayload, ok := deleteResult.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("expected delete structured content to be object, got %T", deleteResult.StructuredContent)
+	}
+	if deleted, _ := deletePayload["deleted"].(bool); !deleted {
+		t.Fatalf("expected delete payload deleted=true, got %v", deletePayload)
+	}
+	if deletePayload["item_id"] != itemID {
+		t.Fatalf("expected delete payload item_id=%q, got %v", itemID, deletePayload["item_id"])
+	}
+
+	getAfterDelete := mcp.CallToolRequest{}
+	getAfterDelete.Params.Name = "get_knowledge_item"
+	getAfterDelete.Params.Arguments = map[string]any{"kb_id": "docs", "item_id": itemID}
+	missing, err := client.CallTool(ctx, getAfterDelete)
+	if err != nil {
+		t.Fatalf("call get_knowledge_item after delete: %v", err)
+	}
+	if !missing.IsError {
+		t.Fatalf("expected get_knowledge_item to error after delete, got %q", firstTextContent(t, missing.Content))
 	}
 }
 
@@ -367,7 +450,7 @@ func TestSearchKnowledgeSchemaIncludesScopeAndKBIDsItems(t *testing.T) {
 
 func TestGetAddIndexSchemasIncludeOptionalScope(t *testing.T) {
 	tools := mcpadapter.NewServer(nil).Tools()
-	for _, name := range []string{"get_knowledge_item", "add_knowledge_item", "index_knowledge"} {
+	for _, name := range []string{"get_knowledge_item", "add_knowledge_item", "delete_knowledge_item", "index_knowledge"} {
 		tool := findTool(t, tools, name)
 		if _, ok := tool.InputSchema.Properties["scope"]; !ok {
 			t.Fatalf("expected %s to expose scope property", name)
@@ -497,6 +580,152 @@ func TestMCPProjectScopeDefaultsThroughService(t *testing.T) {
 	res3, err := client.CallTool(ctx, searchRequest)
 	if err != nil || res3.IsError {
 		t.Fatalf("search object: err=%v isError=%v body=%s", err, res3 != nil && res3.IsError, firstTextContent(t, res3.Content))
+	}
+}
+
+func TestMCPCreateAndDeleteKnowledgeBaseRoundTrip(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ctx := context.Background()
+	globalDir := t.TempDir()
+	storePath := filepath.Join(t.TempDir(), "newkb")
+	if err := os.MkdirAll(storePath, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	globalStore := registry.NewMemoryStore(nil)
+	reg := registry.New(nil, globalStore, nil, "")
+	_ = globalDir
+	build := func(_ []core.KnowledgeBase) (map[string]core.StoreBackend, error) {
+		return map[string]core.StoreBackend{"text": text.New()}, nil
+	}
+	svc, err := service.NewManaged(reg, build)
+	if err != nil {
+		t.Fatalf("NewManaged: %v", err)
+	}
+	defer svc.Close()
+
+	adapter := mcpadapter.NewServer(svc)
+	client, err := mcpclient.NewInProcessClient(adapter.MCPServer())
+	if err != nil {
+		t.Fatalf("new in-process client: %v", err)
+	}
+	defer client.Close()
+	if err := client.Start(ctx); err != nil {
+		t.Fatalf("start client: %v", err)
+	}
+	initRequest := mcp.InitializeRequest{}
+	initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initRequest.Params.ClientInfo = mcp.Implementation{Name: "knowledger-test", Version: "0.1.0"}
+	if _, err := client.Initialize(ctx, initRequest); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+
+	createRequest := mcp.CallToolRequest{}
+	createRequest.Params.Name = "create_knowledge_base"
+	createRequest.Params.Arguments = map[string]any{
+		"id":         "newkb",
+		"name":       "New KB",
+		"store_type": "text",
+		"path":       storePath,
+		"tags":       []string{"alpha"},
+	}
+	createResult, err := client.CallTool(ctx, createRequest)
+	if err != nil {
+		t.Fatalf("call create_knowledge_base: %v", err)
+	}
+	if createResult.IsError {
+		t.Fatalf("expected create_knowledge_base success, got %q", firstTextContent(t, createResult.Content))
+	}
+	createPayload, ok := createResult.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("expected structured create result, got %T", createResult.StructuredContent)
+	}
+	if _, ok := createPayload["knowledge_base"]; !ok {
+		t.Fatalf("expected knowledge_base in payload, got %v", createPayload)
+	}
+
+	listRequest := mcp.CallToolRequest{}
+	listRequest.Params.Name = "list_knowledge_bases"
+	listResult, err := client.CallTool(ctx, listRequest)
+	if err != nil || listResult.IsError {
+		t.Fatalf("list after create failed: err=%v isError=%v body=%s", err, listResult != nil && listResult.IsError, firstTextContent(t, listResult.Content))
+	}
+	if !strings.Contains(firstTextContent(t, listResult.Content), "newkb") {
+		t.Fatalf("expected newkb in list output, got %q", firstTextContent(t, listResult.Content))
+	}
+
+	// Duplicate create should error.
+	dupResult, err := client.CallTool(ctx, createRequest)
+	if err != nil {
+		t.Fatalf("call duplicate create_knowledge_base: %v", err)
+	}
+	if !dupResult.IsError {
+		t.Fatalf("expected duplicate create_knowledge_base to error")
+	}
+
+	deleteRequest := mcp.CallToolRequest{}
+	deleteRequest.Params.Name = "delete_knowledge_base"
+	deleteRequest.Params.Arguments = map[string]any{"id": "newkb"}
+	deleteResult, err := client.CallTool(ctx, deleteRequest)
+	if err != nil {
+		t.Fatalf("call delete_knowledge_base: %v", err)
+	}
+	if deleteResult.IsError {
+		t.Fatalf("expected delete_knowledge_base success, got %q", firstTextContent(t, deleteResult.Content))
+	}
+	deletePayload, ok := deleteResult.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("expected structured delete result, got %T", deleteResult.StructuredContent)
+	}
+	if deleted, _ := deletePayload["deleted"].(bool); !deleted {
+		t.Fatalf("expected deleted=true, got %v", deletePayload)
+	}
+	if deletePayload["id"] != "newkb" {
+		t.Fatalf("expected delete id=newkb, got %v", deletePayload["id"])
+	}
+
+	// After delete, listing should not contain newkb anymore.
+	listAfter, err := client.CallTool(ctx, listRequest)
+	if err != nil || listAfter.IsError {
+		t.Fatalf("list after delete failed: err=%v isError=%v", err, listAfter != nil && listAfter.IsError)
+	}
+	if strings.Contains(firstTextContent(t, listAfter.Content), "newkb") {
+		t.Fatalf("expected newkb to be absent after delete, got %q", firstTextContent(t, listAfter.Content))
+	}
+}
+
+func TestMCPCreateKnowledgeBaseRequiresRuntimeRegistry(t *testing.T) {
+	ctx := context.Background()
+	svc := service.New(nil, map[string]core.StoreBackend{"text": text.New()})
+	adapter := mcpadapter.NewServer(svc)
+	client, err := mcpclient.NewInProcessClient(adapter.MCPServer())
+	if err != nil {
+		t.Fatalf("new in-process client: %v", err)
+	}
+	defer client.Close()
+	if err := client.Start(ctx); err != nil {
+		t.Fatalf("start client: %v", err)
+	}
+	initRequest := mcp.InitializeRequest{}
+	initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initRequest.Params.ClientInfo = mcp.Implementation{Name: "knowledger-test", Version: "0.1.0"}
+	if _, err := client.Initialize(ctx, initRequest); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+
+	request := mcp.CallToolRequest{}
+	request.Params.Name = "create_knowledge_base"
+	request.Params.Arguments = map[string]any{
+		"id":         "x",
+		"store_type": "text",
+		"path":       t.TempDir(),
+	}
+	result, err := client.CallTool(ctx, request)
+	if err != nil {
+		t.Fatalf("call create_knowledge_base: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected error when registry is unavailable")
 	}
 }
 

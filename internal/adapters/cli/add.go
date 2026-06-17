@@ -12,7 +12,8 @@ import (
 )
 
 func newAddCommand(svc *service.Service) *cobra.Command {
-	var kbID, title, content string
+	var kbID, title, content, metadataJSON string
+	var tags []string
 	cmd := &cobra.Command{
 		Use: "add",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -20,10 +21,16 @@ func newAddCommand(svc *service.Service) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			var metadata map[string]any
+			if strings.TrimSpace(metadataJSON) != "" {
+				if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
+					return fmt.Errorf("--metadata must be a JSON object: %w", err)
+				}
+			}
 			if showsEmbeddedChromaHint(svc, scope, kbID) {
 				fmt.Fprintln(cmd.ErrOrStderr(), "Embedded Chroma semantic indexing may download runtime/model files on first use; this can take a few minutes.")
 			}
-			item, ingest, status, err := svc.Add(context.Background(), core.AddInput{KBID: kbID, Scope: scope, Title: title, Content: content})
+			item, ingest, status, err := svc.Add(context.Background(), core.AddInput{KBID: kbID, Scope: scope, Title: title, Content: content, Tags: tags, Metadata: metadata})
 			if err != nil {
 				return err
 			}
@@ -33,6 +40,8 @@ func newAddCommand(svc *service.Service) *cobra.Command {
 	cmd.Flags().StringVar(&kbID, "kb", "", "knowledge base id")
 	cmd.Flags().StringVar(&title, "title", "", "item title")
 	cmd.Flags().StringVar(&content, "content", "", "item content")
+	cmd.Flags().StringSliceVar(&tags, "tag", nil, "item tag (repeat or comma-separate for multiple)")
+	cmd.Flags().StringVar(&metadataJSON, "metadata", "", "item metadata as a JSON object")
 	return cmd
 }
 

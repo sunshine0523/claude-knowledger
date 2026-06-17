@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -89,5 +90,80 @@ func TestAddCommandResolvesProjectScopeByDefaultInProject(t *testing.T) {
 	}
 	if got != core.ScopeProject {
 		t.Fatalf("expected project scope, got %q", got)
+	}
+}
+
+type addRecordingBackend struct {
+	lastInput core.AddInput
+}
+
+func (b *addRecordingBackend) Add(_ context.Context, _ core.KnowledgeBase, input core.AddInput) (core.KnowledgeItem, core.IngestionResult, core.IndexStatus, error) {
+	b.lastInput = input
+	return core.KnowledgeItem{ID: "1", KBID: input.KBID, Title: input.Title, Content: input.Content, Tags: input.Tags, Metadata: input.Metadata}, core.IngestionResult{Success: true, ItemID: "1"}, core.IndexStatus{State: "indexed"}, nil
+}
+
+func (b *addRecordingBackend) Search(context.Context, core.KnowledgeBase, core.SearchOptions) ([]core.SearchHit, error) {
+	return nil, nil
+}
+
+func (b *addRecordingBackend) GetItem(context.Context, core.KnowledgeBase, string) (core.KnowledgeItem, error) {
+	return core.KnowledgeItem{}, nil
+}
+
+func (b *addRecordingBackend) ListItems(context.Context, core.KnowledgeBase) ([]core.KnowledgeItem, error) {
+	return nil, nil
+}
+
+func (b *addRecordingBackend) DeleteItem(context.Context, core.KnowledgeBase, string) error {
+	return nil
+}
+
+func (b *addRecordingBackend) SupportsSemantic(core.KnowledgeBase) bool { return false }
+
+func TestAddCommandPassesTagsAndMetadata(t *testing.T) {
+	backend := &addRecordingBackend{}
+	svc := service.New(
+		[]core.KnowledgeBase{{ID: "notes", Scope: core.ScopeGlobal, StoreType: "sqlite", Enabled: true}},
+		map[string]core.StoreBackend{"sqlite": backend},
+	)
+	cmd := cli.NewRootCommand(svc)
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{
+		"add", "--kb", "notes", "--title", "T", "--content", "C",
+		"--tag", "alpha", "--tag", "beta",
+		"--metadata", `{"source":"cli","priority":3}`,
+	})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	if !reflect.DeepEqual(backend.lastInput.Tags, []string{"alpha", "beta"}) {
+		t.Fatalf("expected tags [alpha beta], got %v", backend.lastInput.Tags)
+	}
+	if backend.lastInput.Metadata["source"] != "cli" {
+		t.Fatalf("expected metadata.source=cli, got %v", backend.lastInput.Metadata["source"])
+	}
+	if v, _ := backend.lastInput.Metadata["priority"].(float64); v != 3 {
+		t.Fatalf("expected metadata.priority=3, got %v", backend.lastInput.Metadata["priority"])
+	}
+}
+
+func TestAddCommandRejectsInvalidMetadataJSON(t *testing.T) {
+	svc := service.New(
+		[]core.KnowledgeBase{{ID: "notes", Scope: core.ScopeGlobal, StoreType: "sqlite", Enabled: true}},
+		map[string]core.StoreBackend{"sqlite": &addRecordingBackend{}},
+	)
+	cmd := cli.NewRootCommand(svc)
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{
+		"add", "--kb", "notes", "--title", "T", "--content", "C",
+		"--metadata", "not-json",
+	})
+
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("expected error from invalid metadata JSON")
 	}
 }
