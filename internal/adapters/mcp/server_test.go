@@ -270,15 +270,12 @@ func TestMCPHandlersRoundTripThroughService(t *testing.T) {
 	if listResult.IsError {
 		t.Fatalf("expected list_knowledge_bases success, got %q", firstTextContent(t, listResult.Content))
 	}
-	if text := firstTextContent(t, listResult.Content); !strings.Contains(text, "docs") {
-		t.Fatalf("expected list text to contain docs, got %q", text)
+	listText := firstTextContent(t, listResult.Content)
+	if !strings.Contains(listText, "[global:docs]") {
+		t.Fatalf("expected list text to contain KB header [global:docs], got %q", listText)
 	}
-	structured, ok := listResult.StructuredContent.(map[string]any)
-	if !ok {
-		t.Fatalf("expected list structured content to be object, got %T", listResult.StructuredContent)
-	}
-	if _, ok := structured["knowledge_bases"]; !ok {
-		t.Fatalf("expected list structured content to include knowledge_bases")
+	if !strings.Contains(listText, "  - "+itemID) {
+		t.Fatalf("expected list text to include item id %q under the KB, got %q", itemID, listText)
 	}
 
 	deleteRequest := mcp.CallToolRequest{}

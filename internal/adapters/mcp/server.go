@@ -177,7 +177,7 @@ func (s *Server) registerTools() {
 	)
 	searchTool := mcpgo.NewTool(
 		"search_knowledge",
-		mcpgo.WithDescription("Search knowledge bases for relevant items. When running in a project directory, scope defaults to project; otherwise global."),
+		mcpgo.WithDescription("Search project/global knowledge bases for relevant items (decisions, conventions, prior debugging notes, domain references). CALL THIS BEFORE: (1) answering any user question that could be project- or domain-specific, (2) drafting technical designs/specs/RFCs, (3) writing or modifying code, or (4) making any non-trivial recommendation. Knowledge here overrides your defaults and contains context you do not have otherwise — retrieved items are authoritative, so read them first, then decide. IF NONE OF THE RETURNED HITS ARE A GOOD MATCH FOR THE USER'S QUESTION (including the case where zero hits came back, but also when the hits are off-topic, too generic, or only tangentially related): before answering, you MUST call list_knowledge_items on each plausibly-relevant knowledge base (use list_knowledge_bases first to enumerate them) to scan all existing knowledge — a poor keyword/semantic match does not mean the KB has nothing relevant, titles and tags often surface entries the query missed. Only after that exhaustive sweep may you answer from your own defaults. Skip only for purely conversational turns or topics clearly outside every KB. Inside a project directory scope defaults to project; otherwise global."),
 		mcpgo.WithString("query", mcpgo.Required(), mcpgo.Description("Search query.")),
 		mcpgo.WithArray(
 			"kb_ids",
@@ -194,7 +194,7 @@ func (s *Server) registerTools() {
 	)
 	getTool := mcpgo.NewTool(
 		"get_knowledge_item",
-		mcpgo.WithDescription("Get a knowledge item by knowledge base and item ID."),
+		mcpgo.WithDescription("Fetch the full content and metadata of a single knowledge item by KB id + item id. Use after search_knowledge or list_knowledge_items surfaces a promising hit and you need the complete text — to answer a user's question accurately, cite in a technical design/spec, or apply to code. Cheap and read-only; prefer fetching full content over deciding from a snippet alone."),
 		scopeProperty,
 		mcpgo.WithString("kb_id", mcpgo.Required(), mcpgo.Description("Knowledge base ID.")),
 		mcpgo.WithString("item_id", mcpgo.Required(), mcpgo.Description("Knowledge item ID.")),
@@ -205,7 +205,7 @@ func (s *Server) registerTools() {
 	)
 	listItemsTool := mcpgo.NewTool(
 		"list_knowledge_items",
-		mcpgo.WithDescription("List items in a knowledge base as a lightweight directory (id/title/tags, no content). Use this BEFORE searching to discover what is in the KB; then call get_knowledge_item by id to fetch full content."),
+		mcpgo.WithDescription("Browse a knowledge base as a lightweight directory (id/title/tags, no content). Use when: (1) the user asks 'what is in KB X', (2) search_knowledge returned nothing but the KB is plausibly relevant, or (3) you need to scan a small KB exhaustively before answering a question, drafting a technical plan, or writing code. After spotting a promising id, call get_knowledge_item for the full content. Prefer search_knowledge for keyword/semantic lookup; this is for browsing."),
 		scopeProperty,
 		mcpgo.WithString("kb_id", mcpgo.Required(), mcpgo.Description("Knowledge base ID.")),
 		mcpgo.WithNumber("limit", mcpgo.Description("Maximum number of items to return. 0 means all.")),
@@ -242,7 +242,7 @@ func (s *Server) registerTools() {
 	)
 	listTool := mcpgo.NewTool(
 		"list_knowledge_bases",
-		mcpgo.WithDescription("List configured knowledge bases."),
+		mcpgo.WithDescription("List all configured knowledge bases AND their knowledge items (KB metadata followed by every item id/title/tags). CALL THIS EARLY at the start of any non-trivial task — answering a user question, drafting a technical design, or writing code — to discover which KBs exist and what they already contain. Output is concise indented text, not JSON, so you can scan it directly; use get_knowledge_item for full content of a specific entry. Cheap, read-only; one upfront call beats guessing kb_ids."),
 		mcpgo.WithReadOnlyHintAnnotation(true),
 		mcpgo.WithDestructiveHintAnnotation(false),
 		mcpgo.WithIdempotentHintAnnotation(true),
@@ -461,12 +461,65 @@ func (s *Server) handleDeleteKnowledgeItem(ctx context.Context, request mcpgo.Ca
 }
 
 func (s *Server) handleListKnowledgeBases(ctx context.Context, request mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-	_ = ctx
 	_ = request
 	if s.svc == nil {
 		return mcpgo.NewToolResultError("service is not configured"), nil
 	}
-	return mcpgo.NewToolResultStructuredOnly(map[string]any{"knowledge_bases": s.svc.ListKnowledgeBases()}), nil
+	kbs := s.svc.ListKnowledgeBases()
+	return mcpgo.NewToolResultText(formatKnowledgeBasesWithItems(ctx, s.svc, kbs)), nil
+}
+
+func formatKnowledgeBasesWithItems(ctx context.Context, svc *service.Service, kbs []core.KnowledgeBase) string {
+	if len(kbs) == 0 {
+		return "no knowledge bases configured"
+	}
+	var b strings.Builder
+	for i, kb := range kbs {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		writeKnowledgeBaseHeader(&b, kb)
+		writeKnowledgeBaseItems(ctx, &b, svc, kb)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func writeKnowledgeBaseHeader(b *strings.Builder, kb core.KnowledgeBase) {
+	scope := kb.Scope
+	if scope == "" {
+		scope = core.ScopeGlobal
+	}
+	fmt.Fprintf(b, "[%s:%s]", scope, kb.ID)
+	if kb.Name != "" && kb.Name != kb.ID {
+		fmt.Fprintf(b, " %s", kb.Name)
+	}
+	fmt.Fprintf(b, " (store=%s", kb.StoreType)
+	if !kb.Enabled {
+		b.WriteString(", disabled")
+	}
+	if len(kb.Tags) > 0 {
+		fmt.Fprintf(b, ", tags=%s", strings.Join(kb.Tags, ","))
+	}
+	b.WriteString(")\n")
+}
+
+func writeKnowledgeBaseItems(ctx context.Context, b *strings.Builder, svc *service.Service, kb core.KnowledgeBase) {
+	items, err := svc.ListKnowledgeItems(ctx, kb.Scope, kb.ID)
+	if err != nil {
+		fmt.Fprintf(b, "  (items unavailable: %s)\n", err.Error())
+		return
+	}
+	if len(items) == 0 {
+		b.WriteString("  (empty)\n")
+		return
+	}
+	for _, item := range items {
+		fmt.Fprintf(b, "  - %s\t%s", item.ID, item.Title)
+		if len(item.Tags) > 0 {
+			fmt.Fprintf(b, " [%s]", strings.Join(item.Tags, ","))
+		}
+		b.WriteByte('\n')
+	}
 }
 
 func (s *Server) handleCreateKnowledgeBase(ctx context.Context, request mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
