@@ -39,6 +39,33 @@ type getKnowledgeItemInput struct {
 	ItemID string `json:"item_id"`
 }
 
+type listKnowledgeItemsInput struct {
+	Scope  string `json:"scope,omitempty"`
+	KBID   string `json:"kb_id"`
+	Limit  int    `json:"limit,omitempty"`
+	Offset int    `json:"offset,omitempty"`
+}
+
+// knowledgeItemSummary is the lean view returned by list_knowledge_items —
+// no Content/Metadata, so a large KB can be browsed cheaply as a directory.
+type knowledgeItemSummary struct {
+	ID        string   `json:"id"`
+	KBID      string   `json:"kb_id"`
+	Scope     string   `json:"scope"`
+	Type      string   `json:"type,omitempty"`
+	Title     string   `json:"title"`
+	Summary   string   `json:"summary,omitempty"`
+	Tags      []string `json:"tags,omitempty"`
+	UpdatedAt string   `json:"updated_at,omitempty"`
+}
+
+type listKnowledgeItemsResult struct {
+	Items  []knowledgeItemSummary `json:"items"`
+	Total  int                    `json:"total"`
+	Offset int                    `json:"offset"`
+	Limit  int                    `json:"limit"`
+}
+
 type addKnowledgeItemInput struct {
 	Scope    string         `json:"scope,omitempty"`
 	KBID     string         `json:"kb_id"`
@@ -176,6 +203,18 @@ func (s *Server) registerTools() {
 		mcpgo.WithIdempotentHintAnnotation(true),
 		mcpgo.WithOpenWorldHintAnnotation(false),
 	)
+	listItemsTool := mcpgo.NewTool(
+		"list_knowledge_items",
+		mcpgo.WithDescription("List items in a knowledge base as a lightweight directory (id/title/tags, no content). Use this BEFORE searching to discover what is in the KB; then call get_knowledge_item by id to fetch full content."),
+		scopeProperty,
+		mcpgo.WithString("kb_id", mcpgo.Required(), mcpgo.Description("Knowledge base ID.")),
+		mcpgo.WithNumber("limit", mcpgo.Description("Maximum number of items to return. 0 means all.")),
+		mcpgo.WithNumber("offset", mcpgo.Description("Number of items to skip from the start.")),
+		mcpgo.WithReadOnlyHintAnnotation(true),
+		mcpgo.WithDestructiveHintAnnotation(false),
+		mcpgo.WithIdempotentHintAnnotation(true),
+		mcpgo.WithOpenWorldHintAnnotation(false),
+	)
 	addTool := mcpgo.NewTool(
 		"add_knowledge_item",
 		mcpgo.WithDescription("Add a knowledge item to a knowledge base."),
@@ -247,9 +286,10 @@ func (s *Server) registerTools() {
 		mcpgo.WithOpenWorldHintAnnotation(false),
 	)
 
-	s.tools = []mcpgo.Tool{searchTool, getTool, addTool, deleteTool, listTool, createKBTool, deleteKBTool, indexTool}
+	s.tools = []mcpgo.Tool{searchTool, getTool, listItemsTool, addTool, deleteTool, listTool, createKBTool, deleteKBTool, indexTool}
 	s.server.AddTool(searchTool, s.handleSearchKnowledge)
 	s.server.AddTool(getTool, s.handleGetKnowledgeItem)
+	s.server.AddTool(listItemsTool, s.handleListKnowledgeItems)
 	s.server.AddTool(addTool, s.handleAddKnowledgeItem)
 	s.server.AddTool(deleteTool, s.handleDeleteKnowledgeItem)
 	s.server.AddTool(listTool, s.handleListKnowledgeBases)
@@ -322,6 +362,60 @@ func (s *Server) handleGetKnowledgeItem(ctx context.Context, request mcpgo.CallT
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	return mcpgo.NewToolResultStructuredOnly(item), nil
+}
+
+func (s *Server) handleListKnowledgeItems(ctx context.Context, request mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	if s.svc == nil {
+		return mcpgo.NewToolResultError("service is not configured"), nil
+	}
+	var input listKnowledgeItemsInput
+	if err := request.BindArguments(&input); err != nil {
+		return mcpgo.NewToolResultErrorFromErr("invalid arguments", err), nil
+	}
+	scope, err := s.defaultScope(input.Scope)
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	items, err := s.svc.ListKnowledgeItems(ctx, scope, input.KBID)
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	total := len(items)
+	offset := input.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > total {
+		offset = total
+	}
+	end := total
+	if input.Limit > 0 && offset+input.Limit < end {
+		end = offset + input.Limit
+	}
+	page := items[offset:end]
+	summaries := make([]knowledgeItemSummary, 0, len(page))
+	for _, item := range page {
+		updated := ""
+		if !item.UpdatedAt.IsZero() {
+			updated = item.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z")
+		}
+		summaries = append(summaries, knowledgeItemSummary{
+			ID:        item.ID,
+			KBID:      item.KBID,
+			Scope:     scope,
+			Type:      item.Type,
+			Title:     item.Title,
+			Summary:   item.Summary,
+			Tags:      item.Tags,
+			UpdatedAt: updated,
+		})
+	}
+	return mcpgo.NewToolResultStructuredOnly(listKnowledgeItemsResult{
+		Items:  summaries,
+		Total:  total,
+		Offset: offset,
+		Limit:  input.Limit,
+	}), nil
 }
 
 func (s *Server) handleAddKnowledgeItem(ctx context.Context, request mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {

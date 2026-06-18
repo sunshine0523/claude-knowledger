@@ -25,6 +25,7 @@ func NewRootCommandWithAddressAndRunners(svc *service.Service, address string, r
 	cmd.PersistentFlags().StringVar(&scopeFlag, "scope", "", "knowledge base scope: project, global. Defaults to project when running in a project directory, else global.")
 	cmd.AddCommand(newSearchCommand(svc))
 	cmd.AddCommand(newGetCommand(svc))
+	cmd.AddCommand(newListItemsCommand(svc))
 	cmd.AddCommand(newAddCommand(svc))
 	cmd.AddCommand(newDeleteCommand(svc))
 	cmd.AddCommand(newIndexCommand(svc))

@@ -55,7 +55,7 @@ func (b *indexToolBackend) MaintainIndex(_ context.Context, _ core.KnowledgeBase
 func TestNewServerRegistersKnowledgeToolsInOrder(t *testing.T) {
 	server := mcpadapter.NewServer(nil)
 	tools := server.Tools()
-	want := []string{"search_knowledge", "get_knowledge_item", "add_knowledge_item", "delete_knowledge_item", "list_knowledge_bases", "create_knowledge_base", "delete_knowledge_base", "index_knowledge"}
+	want := []string{"search_knowledge", "get_knowledge_item", "list_knowledge_items", "add_knowledge_item", "delete_knowledge_item", "list_knowledge_bases", "create_knowledge_base", "delete_knowledge_base", "index_knowledge"}
 	if len(tools) != len(want) {
 		t.Fatalf("expected %d tools, got %d", len(want), len(tools))
 	}
@@ -83,6 +83,23 @@ func TestGetKnowledgeItemSchema(t *testing.T) {
 	for _, required := range []string{"kb_id", "item_id"} {
 		if !hasRequired(tool, required) {
 			t.Fatalf("expected get_knowledge_item to require %q", required)
+		}
+	}
+}
+
+func TestListKnowledgeItemsSchema(t *testing.T) {
+	tool := findTool(t, mcpadapter.NewServer(nil).Tools(), "list_knowledge_items")
+	if !hasRequired(tool, "kb_id") {
+		t.Fatalf("expected list_knowledge_items to require kb_id")
+	}
+	for _, prop := range []string{"scope", "limit", "offset"} {
+		if _, ok := tool.InputSchema.Properties[prop]; !ok {
+			t.Fatalf("expected list_knowledge_items schema to expose %q property", prop)
+		}
+	}
+	for _, required := range tool.InputSchema.Required {
+		if required == "scope" || required == "limit" || required == "offset" {
+			t.Fatalf("%q must be optional on list_knowledge_items", required)
 		}
 	}
 }
