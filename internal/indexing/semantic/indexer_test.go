@@ -202,3 +202,76 @@ func TestUpsertItemNoopWhenSemanticDisabled(t *testing.T) {
 		t.Fatalf("expected no calls when semantic disabled, got upserts=%d deletes=%d", len(c.upserts), len(c.deletesByPar))
 	}
 }
+
+func TestSearchAggregatesChunksByParent(t *testing.T) {
+	c := &fakeClient{
+		queryHits: map[string][]chroma.Hit{
+			"hello": {
+				{ItemID: "42#chunk-0", Content: "low", Score: 0.3, Metadata: map[string]any{"kb_id": "notes", "parent_id": "42", "title": "T"}},
+				{ItemID: "42#chunk-1", Content: "high", Score: 0.9, Metadata: map[string]any{"kb_id": "notes", "parent_id": "42", "title": "T"}},
+				{ItemID: "99#chunk-0", Content: "other", Score: 0.5, Metadata: map[string]any{"kb_id": "notes", "parent_id": "99", "title": "U"}},
+			},
+		},
+	}
+	idx := NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	hits, err := idx.Search(context.Background(), semanticKB("notes", "/tmp/c"), "hello", 10, "semantic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 2 {
+		t.Fatalf("expected 2 parents (42 + 99), got %d: %#v", len(hits), hits)
+	}
+	if hits[0].ItemID != "42" || hits[0].Score != 0.9 || hits[0].Snippet != "high" {
+		t.Fatalf("expected parent 42 with high-score chunk first, got %#v", hits[0])
+	}
+	if hits[0].MatchMode != "semantic" || hits[0].SourceBackend != "chroma" {
+		t.Fatalf("bad match mode/source: %#v", hits[0])
+	}
+	if hits[0].KBID != "notes" || hits[0].Title != "T" {
+		t.Fatalf("bad kb/title: %#v", hits[0])
+	}
+}
+
+func TestSearchFiltersByKBID(t *testing.T) {
+	c := &fakeClient{
+		queryHits: map[string][]chroma.Hit{
+			"hello": {
+				{ItemID: "1#chunk-0", Score: 0.9, Metadata: map[string]any{"kb_id": "other", "parent_id": "1"}},
+				{ItemID: "2#chunk-0", Score: 0.5, Metadata: map[string]any{"kb_id": "notes", "parent_id": "2"}},
+			},
+		},
+	}
+	idx := NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	hits, err := idx.Search(context.Background(), semanticKB("notes", "/tmp/c"), "hello", 10, "semantic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].ItemID != "2" {
+		t.Fatalf("expected only kb=notes hit, got %#v", hits)
+	}
+}
+
+func TestSearchEmptyTokensReturnsNil(t *testing.T) {
+	c := &fakeClient{}
+	idx := NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	hits, err := idx.Search(context.Background(), semanticKB("notes", "/tmp/c"), "   ", 10, "semantic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hits != nil {
+		t.Fatalf("expected nil hits, got %#v", hits)
+	}
+}
+
+func TestSearchUnsupportedKBReturnsNilNoCall(t *testing.T) {
+	c := &fakeClient{}
+	idx := NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	kb := core.KnowledgeBase{ID: "x"}
+	hits, err := idx.Search(context.Background(), kb, "hi", 10, "semantic")
+	if err != nil || hits != nil {
+		t.Fatalf("expected nil/nil, got %v / %v", err, hits)
+	}
+	if len(c.upserts)+len(c.deletesByPar)+len(c.deletesByID) != 0 {
+		t.Fatal("expected no client calls")
+	}
+}
