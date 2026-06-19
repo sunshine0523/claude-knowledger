@@ -10,6 +10,9 @@ import (
 	"github.com/kindbrave/knowledger/internal/backends/text"
 	"github.com/kindbrave/knowledger/internal/config"
 	"github.com/kindbrave/knowledger/internal/core"
+	"github.com/kindbrave/knowledger/internal/indexing/chroma"
+	"github.com/kindbrave/knowledger/internal/indexing/chunking"
+	"github.com/kindbrave/knowledger/internal/indexing/semantic"
 	"github.com/kindbrave/knowledger/internal/install/claude"
 	"github.com/kindbrave/knowledger/internal/projectroot"
 	"github.com/kindbrave/knowledger/internal/registry"
@@ -109,12 +112,15 @@ func BuildServiceFromConfig(cfg config.Config, projectRoot string) (*service.Ser
 }
 
 func buildBackends(kbs []core.KnowledgeBase) (map[string]core.StoreBackend, error) {
+	indexer := semantic.NewIndexer(chroma.NewClient, chunking.Default())
+	// text backend owns the shared indexer's Close lifecycle
 	backends := map[string]core.StoreBackend{
-		"text": text.New(),
+		"text": text.New(text.WithIndexer(indexer)),
 	}
 	if hasStoreType(kbs, "sqlite") {
-		sqliteBackend, err := sqlite.NewMulti(kbs)
+		sqliteBackend, err := sqlite.NewMulti(kbs, sqlite.WithIndexer(indexer))
 		if err != nil {
+			_ = indexer.Close()
 			return nil, err
 		}
 		backends["sqlite"] = sqliteBackend

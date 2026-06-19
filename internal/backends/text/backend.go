@@ -462,3 +462,10 @@ func (b *Backend) MaintainIndex(ctx context.Context, kb core.KnowledgeBase, opts
 }
 
 func (b *Backend) SupportsSemantic(kb core.KnowledgeBase) bool { return b.supportsKBSemantic(kb) }
+
+func (b *Backend) Close() error {
+	if b.indexer != nil {
+		return b.indexer.Close()
+	}
+	return nil
+}
