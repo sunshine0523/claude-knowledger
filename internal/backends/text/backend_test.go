@@ -2,6 +2,7 @@ package text_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,7 +11,158 @@ import (
 
 	"github.com/kindbrave/knowledger/internal/backends/text"
 	"github.com/kindbrave/knowledger/internal/core"
+	"github.com/kindbrave/knowledger/internal/indexing/chroma"
+	"github.com/kindbrave/knowledger/internal/indexing/semantic"
 )
+
+func newTextSemanticKB(dir, chromaPath string) core.KnowledgeBase {
+	return core.KnowledgeBase{
+		ID:          "docs",
+		StoreType:   "text",
+		StoreConfig: map[string]any{"path": dir},
+		Enabled:     true,
+		Indexing: map[string]any{
+			"semantic": map[string]any{
+				"enabled":       true,
+				"provider":      "chroma",
+				"mode":          chroma.ModePersistent,
+				"path":          chromaPath,
+				"collection":    "docs",
+				"auto_download": true,
+			},
+		},
+	}
+}
+
+type recordingClient struct {
+	upserts    []chroma.Item
+	parentDels []string
+	queryHits  map[string][]chroma.Hit
+	upsertErr  error
+	deleteErr  error
+}
+
+func (r *recordingClient) Upsert(_ context.Context, _ string, item chroma.Item) error {
+	r.upserts = append(r.upserts, item)
+	return r.upsertErr
+}
+func (r *recordingClient) Query(_ context.Context, _ string, q string, _ int) ([]chroma.Hit, error) {
+	return r.queryHits[q], nil
+}
+func (r *recordingClient) Delete(_ context.Context, _ string, _ string) error { return nil }
+func (r *recordingClient) DeleteByParent(_ context.Context, _ string, _ string, parentID string) error {
+	r.parentDels = append(r.parentDels, parentID)
+	return r.deleteErr
+}
+func (r *recordingClient) ListByKB(_ context.Context, _ string, _ string) ([]chroma.ChunkRecord, error) {
+	return nil, nil
+}
+func (r *recordingClient) Close() error { return nil }
+
+func TestTextBackendAddCallsIndexer(t *testing.T) {
+	dir := t.TempDir()
+	chromaDir := t.TempDir()
+	c := &recordingClient{}
+	idx := semantic.NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	b := text.New(text.WithIndexer(idx))
+
+	kb := newTextSemanticKB(dir, chromaDir)
+	_, _, status, err := b.Add(context.Background(), kb, core.AddInput{Title: "T", Content: "hello world"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.State != "indexed" {
+		t.Fatalf("expected indexed, got %#v", status)
+	}
+	if len(c.upserts) != 1 {
+		t.Fatalf("expected 1 chunk upsert, got %d", len(c.upserts))
+	}
+	md := c.upserts[0].Metadata
+	if _, ok := md["path"].(string); !ok {
+		t.Fatalf("expected path in metadata, got %#v", md)
+	}
+	if _, ok := md["mtime"].(int64); !ok {
+		t.Fatalf("expected mtime in metadata, got %#v", md)
+	}
+}
+
+func TestTextBackendAddRollsBackFileOnIndexerFailure(t *testing.T) {
+	dir := t.TempDir()
+	c := &recordingClient{upsertErr: errors.New("boom")}
+	idx := semantic.NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	b := text.New(text.WithIndexer(idx))
+	kb := newTextSemanticKB(dir, t.TempDir())
+
+	_, _, _, err := b.Add(context.Background(), kb, core.AddInput{Title: "T", Content: "x"})
+	if err == nil {
+		t.Fatal("expected indexer error")
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 0 {
+		t.Fatalf("expected file rolled back, found %#v", entries)
+	}
+}
+
+func TestTextBackendDeleteIgnoresIndexerFailure(t *testing.T) {
+	dir := t.TempDir()
+	c := &recordingClient{}
+	idx := semantic.NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	b := text.New(text.WithIndexer(idx))
+	kb := newTextSemanticKB(dir, t.TempDir())
+	item, _, _, err := b.Add(context.Background(), kb, core.AddInput{Title: "T", Content: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.deleteErr = errors.New("chroma down")
+	if err := b.DeleteItem(context.Background(), kb, item.ID); err != nil {
+		t.Fatalf("expected nil error even when chroma delete fails, got %v", err)
+	}
+}
+
+func TestTextBackendSemanticSearchEnrichesAndSkipsOrphans(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "real.md"), []byte("---\ntitle: real\n---\nbody"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := &recordingClient{
+		queryHits: map[string][]chroma.Hit{
+			"hello": {
+				{ItemID: "real#chunk-0", Content: "body", Score: 0.9, Metadata: map[string]any{"kb_id": "docs", "parent_id": "real", "title": "real.md"}},
+				{ItemID: "ghost#chunk-0", Content: "gone", Score: 0.5, Metadata: map[string]any{"kb_id": "docs", "parent_id": "ghost", "title": "ghost.md"}},
+			},
+		},
+	}
+	idx := semantic.NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	b := text.New(text.WithIndexer(idx))
+	kb := newTextSemanticKB(dir, t.TempDir())
+
+	hits, err := b.Search(context.Background(), kb, core.SearchOptions{Query: "hello", SearchMode: "semantic", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("expected only the live hit, got %d: %#v", len(hits), hits)
+	}
+	if hits[0].SourceBackend != "text" || hits[0].Locator == "" {
+		t.Fatalf("expected enriched hit with locator, got %#v", hits[0])
+	}
+}
+
+func TestTextBackendSemanticSearchFallsBackToLexicalWhenSemanticDisabled(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.md"), []byte("hello world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := text.New()
+	kb := core.KnowledgeBase{ID: "docs", StoreType: "text", StoreConfig: map[string]any{"path": dir}, Enabled: true}
+	hits, err := b.Search(context.Background(), kb, core.SearchOptions{Query: "hello", SearchMode: "semantic", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("expected lexical fallback to find the file, got %d", len(hits))
+	}
+}
 
 func TestTextBackendAddListAndSearch(t *testing.T) {
 	ctx := context.Background()

@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/kindbrave/knowledger/internal/core"
+	"github.com/kindbrave/knowledger/internal/indexing/semantic"
 )
 
 var supportedTextExtensions = map[string]struct{}{
@@ -18,11 +20,35 @@ var supportedTextExtensions = map[string]struct{}{
 	".txt": {},
 }
 
-type Backend struct{}
+type Backend struct {
+	indexer *semantic.Indexer
+}
 
-func New() *Backend { return &Backend{} }
+type Option func(*Backend)
 
-func (b *Backend) Add(_ context.Context, kb core.KnowledgeBase, input core.AddInput) (core.KnowledgeItem, core.IngestionResult, core.IndexStatus, error) {
+func WithIndexer(idx *semantic.Indexer) Option {
+	return func(b *Backend) {
+		if idx != nil {
+			b.indexer = idx
+		}
+	}
+}
+
+func New(opts ...Option) *Backend {
+	b := &Backend{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(b)
+		}
+	}
+	return b
+}
+
+func (b *Backend) supportsKBSemantic(kb core.KnowledgeBase) bool {
+	return b.indexer != nil && b.indexer.SupportsKB(kb)
+}
+
+func (b *Backend) Add(ctx context.Context, kb core.KnowledgeBase, input core.AddInput) (core.KnowledgeItem, core.IngestionResult, core.IndexStatus, error) {
 	dir, ok := kb.StoreConfig["path"].(string)
 	if !ok || dir == "" {
 		return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, &core.Error{Kind: core.ErrorKindConfig, Message: "text backend requires store_config.path"}
@@ -40,10 +66,46 @@ func (b *Backend) Add(_ context.Context, kb core.KnowledgeBase, input core.AddIn
 	}
 
 	item := core.KnowledgeItem{ID: id, KBID: kb.ID, Type: "document", Title: input.Title, Content: input.Content, Tags: input.Tags, CreatedAt: now, UpdatedAt: now}
-	return item, core.IngestionResult{Success: true, ItemID: id}, core.IndexStatus{State: "not_indexed"}, nil
+	if !b.supportsKBSemantic(kb) {
+		return item, core.IngestionResult{Success: true, ItemID: id}, core.IndexStatus{State: "not_indexed"}, nil
+	}
+	info, _ := os.Stat(path)
+	var mtime int64
+	if info != nil {
+		mtime = info.ModTime().Unix()
+	}
+	extra := map[string]any{
+		"path":  itemPathRel(dir, path),
+		"mtime": mtime,
+	}
+	if err := b.indexer.UpsertItem(ctx, kb, item, extra); err != nil {
+		_ = os.Remove(path)
+		return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, fmt.Errorf("semantic index failed; file rolled back: %w", err)
+	}
+	return item, core.IngestionResult{Success: true, ItemID: id}, core.IndexStatus{State: "indexed"}, nil
 }
 
-func (b *Backend) Search(_ context.Context, kb core.KnowledgeBase, opt core.SearchOptions) ([]core.SearchHit, error) {
+func (b *Backend) Search(ctx context.Context, kb core.KnowledgeBase, opt core.SearchOptions) ([]core.SearchHit, error) {
+	switch opt.SearchMode {
+	case "semantic":
+		if !b.supportsKBSemantic(kb) {
+			return b.lexicalSearch(ctx, kb, opt)
+		}
+		hits, err := b.indexer.Search(ctx, kb, opt.Query, opt.Limit, "semantic")
+		if err != nil {
+			return nil, err
+		}
+		return b.enrichWithFileMeta(kb, hits), nil
+	case "hybrid":
+		effective := opt
+		effective.SearchMode = "semantic"
+		return b.Search(ctx, kb, effective)
+	default:
+		return b.lexicalSearch(ctx, kb, opt)
+	}
+}
+
+func (b *Backend) lexicalSearch(_ context.Context, kb core.KnowledgeBase, opt core.SearchOptions) ([]core.SearchHit, error) {
 	dir, ok := kb.StoreConfig["path"].(string)
 	if !ok || dir == "" {
 		return nil, &core.Error{Kind: core.ErrorKindConfig, Message: "text backend requires store_config.path"}
@@ -104,6 +166,34 @@ func (b *Backend) Search(_ context.Context, kb core.KnowledgeBase, opt core.Sear
 		return hits[:opt.Limit], nil
 	}
 	return hits, nil
+}
+
+func (b *Backend) enrichWithFileMeta(kb core.KnowledgeBase, hits []core.SearchHit) []core.SearchHit {
+	dir, _ := kb.StoreConfig["path"].(string)
+	out := make([]core.SearchHit, 0, len(hits))
+	for _, hit := range hits {
+		path, err := safeItemPath(dir, hit.ItemID)
+		if err != nil {
+			continue
+		}
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		hit.Title = itemTitleForPath(dir, path)
+		hit.Locator = path
+		hit.SourceBackend = "text"
+		hit.ItemType = "document"
+		out = append(out, hit)
+	}
+	return out
+}
+
+func itemPathRel(dir, path string) string {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return filepath.Base(path)
+	}
+	return filepath.ToSlash(rel)
 }
 
 func (b *Backend) ListItems(_ context.Context, kb core.KnowledgeBase) ([]core.KnowledgeItem, error) {
@@ -175,7 +265,7 @@ func (b *Backend) GetItem(_ context.Context, kb core.KnowledgeBase, itemID strin
 	}, nil
 }
 
-func (b *Backend) DeleteItem(_ context.Context, kb core.KnowledgeBase, itemID string) error {
+func (b *Backend) DeleteItem(ctx context.Context, kb core.KnowledgeBase, itemID string) error {
 	dir, ok := kb.StoreConfig["path"].(string)
 	if !ok || dir == "" {
 		return &core.Error{Kind: core.ErrorKindConfig, Message: "text backend requires store_config.path"}
@@ -189,6 +279,11 @@ func (b *Backend) DeleteItem(_ context.Context, kb core.KnowledgeBase, itemID st
 			return &core.Error{Kind: core.ErrorKindStore, Message: "knowledge item not found"}
 		}
 		return err
+	}
+	if b.supportsKBSemantic(kb) {
+		if err := b.indexer.DeleteItem(ctx, kb, itemID); err != nil {
+			log.Printf("text backend: chroma delete failed for %s/%s: %v", kb.ID, itemID, err)
+		}
 	}
 	return nil
 }
@@ -344,4 +439,4 @@ func (b *Backend) MaintainIndex(_ context.Context, kb core.KnowledgeBase, _ core
 	return core.IndexResult{Skipped: 1, Warnings: []string{fmt.Sprintf("%s: semantic indexing is not supported for text backend", kb.ID)}}, nil
 }
 
-func (b *Backend) SupportsSemantic(core.KnowledgeBase) bool { return false }
+func (b *Backend) SupportsSemantic(kb core.KnowledgeBase) bool { return b.supportsKBSemantic(kb) }
