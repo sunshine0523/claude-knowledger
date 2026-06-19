@@ -110,9 +110,20 @@ func ApplyDefaults(cfg *Config) error {
 }
 
 func ApplyKnowledgeBaseDefaults(kb *KnowledgeBaseConfig) error {
-	if kb.StoreType != "sqlite" {
+	switch kb.StoreType {
+	case "sqlite":
+		if err := applySQLiteStoreDefaults(kb); err != nil {
+			return err
+		}
+	case "text":
+		// path is user-provided; nothing to default.
+	default:
 		return nil
 	}
+	return applySemanticIndexingDefaults(kb)
+}
+
+func applySQLiteStoreDefaults(kb *KnowledgeBaseConfig) error {
 	if kb.StoreConfig == nil {
 		kb.StoreConfig = map[string]any{}
 	}
@@ -123,50 +134,46 @@ func ApplyKnowledgeBaseDefaults(kb *KnowledgeBaseConfig) error {
 			return err
 		}
 		kb.StoreConfig["path"] = defaultPath
-	} else {
-		pathString, ok := path.(string)
-		if !ok {
-			return fmt.Errorf("knowledge base %q sqlite store_config.path must be a string", kb.ID)
-		}
-		expanded, err := expandHomePath(pathString)
-		if err != nil {
-			return err
-		}
-		kb.StoreConfig["path"] = expanded
+		return nil
 	}
-	if err := applySQLiteIndexingDefaults(kb); err != nil {
+	pathString, ok := path.(string)
+	if !ok {
+		return fmt.Errorf("knowledge base %q sqlite store_config.path must be a string", kb.ID)
+	}
+	expanded, err := expandHomePath(pathString)
+	if err != nil {
 		return err
 	}
+	kb.StoreConfig["path"] = expanded
 	return nil
 }
 
-func defaultKnowledgeBase() (KnowledgeBaseConfig, error) {
-	path, err := expandHomePath(DefaultStoragePath)
-	if err != nil {
-		return KnowledgeBaseConfig{}, err
-	}
-	kb := KnowledgeBaseConfig{
-		ID:          DefaultKBID,
-		Name:        DefaultKBName,
-		StoreType:   "sqlite",
-		Enabled:     true,
-		StoreConfig: map[string]any{"path": path},
-	}
-	if err := applySQLiteIndexingDefaults(&kb); err != nil {
-		return KnowledgeBaseConfig{}, err
-	}
-	return kb, nil
-}
-
-func applySQLiteIndexingDefaults(kb *KnowledgeBaseConfig) error {
+func applySemanticIndexingDefaults(kb *KnowledgeBaseConfig) error {
 	if kb.Indexing == nil {
 		kb.Indexing = map[string]any{}
 	}
 	lexical := ensureMap(kb.Indexing, "lexical")
 	setDefault(lexical, "enabled", true)
 
+	if kb.StoreType == "text" {
+		// For text, only fill in defaults if the user actually specified a semantic block.
+		rawSemantic, hasSemantic := kb.Indexing["semantic"]
+		if !hasSemantic {
+			return nil
+		}
+		semantic, ok := rawSemantic.(map[string]any)
+		if !ok {
+			return nil
+		}
+		return fillChromaDefaults(kb, semantic)
+	}
+
 	semantic := ensureMap(kb.Indexing, "semantic")
 	setDefault(semantic, "enabled", true)
+	return fillChromaDefaults(kb, semantic)
+}
+
+func fillChromaDefaults(kb *KnowledgeBaseConfig, semantic map[string]any) error {
 	setDefault(semantic, "provider", DefaultChromaProvider)
 	collection := kb.ID
 	if collection == "" {
@@ -221,6 +228,24 @@ func applySQLiteIndexingDefaults(kb *KnowledgeBaseConfig) error {
 	}
 	semantic["path"] = expanded
 	return nil
+}
+
+func defaultKnowledgeBase() (KnowledgeBaseConfig, error) {
+	path, err := expandHomePath(DefaultStoragePath)
+	if err != nil {
+		return KnowledgeBaseConfig{}, err
+	}
+	kb := KnowledgeBaseConfig{
+		ID:          DefaultKBID,
+		Name:        DefaultKBName,
+		StoreType:   "sqlite",
+		Enabled:     true,
+		StoreConfig: map[string]any{"path": path},
+	}
+	if err := applySemanticIndexingDefaults(&kb); err != nil {
+		return KnowledgeBaseConfig{}, err
+	}
+	return kb, nil
 }
 
 func ensureMap(parent map[string]any, key string) map[string]any {

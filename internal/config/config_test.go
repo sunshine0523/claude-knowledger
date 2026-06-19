@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kindbrave/knowledger/internal/config"
@@ -236,6 +237,54 @@ func TestLoadSQLiteKnowledgeBaseRejectsNonStringSemanticMode(t *testing.T) {
 `)
 	if err == nil {
 		t.Fatalf("expected error for non-string semantic mode")
+	}
+}
+
+func TestApplyDefaultsTextWithoutSemanticLeavesIndexingAlone(t *testing.T) {
+	cfg := config.Config{KnowledgeBases: []config.KnowledgeBaseConfig{
+		{ID: "docs", Name: "Docs", StoreType: "text", Enabled: true, StoreConfig: map[string]any{"path": "/tmp/docs"}},
+	}}
+	if err := config.ApplyDefaults(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	semantic, ok := cfg.KnowledgeBases[0].Indexing["semantic"]
+	if ok && semantic != nil {
+		m := semantic.(map[string]any)
+		if enabled, _ := m["enabled"].(bool); enabled {
+			t.Fatalf("text without explicit semantic must not flip enabled true: %#v", m)
+		}
+	}
+}
+
+func TestApplyDefaultsTextWithSemanticFillsChromaPath(t *testing.T) {
+	cfg := config.Config{KnowledgeBases: []config.KnowledgeBaseConfig{
+		{ID: "docs", Name: "Docs", StoreType: "text", Enabled: true,
+			StoreConfig: map[string]any{"path": "/tmp/docs"},
+			Indexing:    map[string]any{"semantic": map[string]any{"enabled": true, "provider": "chroma"}}},
+	}}
+	if err := config.ApplyDefaults(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	sem := cfg.KnowledgeBases[0].Indexing["semantic"].(map[string]any)
+	if sem["mode"] != "persistent" {
+		t.Fatalf("expected persistent mode default, got %v", sem["mode"])
+	}
+	path, _ := sem["path"].(string)
+	if path == "" || !strings.Contains(path, "chroma") {
+		t.Fatalf("expected default chroma path, got %q", path)
+	}
+}
+
+func TestApplyDefaultsSQLiteUnchanged(t *testing.T) {
+	cfg := config.Config{KnowledgeBases: []config.KnowledgeBaseConfig{
+		{ID: "default", Name: "Default", StoreType: "sqlite", Enabled: true},
+	}}
+	if err := config.ApplyDefaults(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	sem := cfg.KnowledgeBases[0].Indexing["semantic"].(map[string]any)
+	if enabled, _ := sem["enabled"].(bool); !enabled {
+		t.Fatal("sqlite semantic should still default-on")
 	}
 }
 
