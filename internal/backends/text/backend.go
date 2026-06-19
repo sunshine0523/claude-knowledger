@@ -435,8 +435,30 @@ func ensureContained(base string, path string) error {
 	return nil
 }
 
-func (b *Backend) MaintainIndex(_ context.Context, kb core.KnowledgeBase, _ core.IndexOptions) (core.IndexResult, error) {
-	return core.IndexResult{Skipped: 1, Warnings: []string{fmt.Sprintf("%s: semantic indexing is not supported for text backend", kb.ID)}}, nil
+func (b *Backend) MaintainIndex(ctx context.Context, kb core.KnowledgeBase, opts core.IndexOptions) (core.IndexResult, error) {
+	if !b.supportsKBSemantic(kb) {
+		return core.IndexResult{
+			Skipped:  1,
+			Warnings: []string{fmt.Sprintf("%s: semantic indexing is not enabled for this knowledge base", kb.ID)},
+		}, nil
+	}
+	dir, _ := kb.StoreConfig["path"].(string)
+	source := func(c context.Context) ([]core.KnowledgeItem, error) { return b.ListItems(c, kb) }
+	metaProvider := func(item core.KnowledgeItem) map[string]any {
+		path, err := safeItemPath(dir, item.ID)
+		if err != nil {
+			return nil
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil
+		}
+		return map[string]any{
+			"path":  itemPathRel(dir, path),
+			"mtime": info.ModTime().Unix(),
+		}
+	}
+	return b.indexer.MaintainIndex(ctx, kb, opts, source, metaProvider)
 }
 
 func (b *Backend) SupportsSemantic(kb core.KnowledgeBase) bool { return b.supportsKBSemantic(kb) }

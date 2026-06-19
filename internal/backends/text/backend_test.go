@@ -164,55 +164,45 @@ func TestTextBackendSemanticSearchFallsBackToLexicalWhenSemanticDisabled(t *test
 	}
 }
 
-func TestTextBackendAddListAndSearch(t *testing.T) {
-	ctx := context.Background()
+func TestTextBackendMaintainIndexSkipsWithoutSemantic(t *testing.T) {
+	b := text.New()
 	dir := t.TempDir()
-	backend := text.New()
-	kb := core.KnowledgeBase{
-		ID:          "docs",
-		StoreType:   "text",
-		StoreConfig: map[string]any{"path": dir},
-		Enabled:     true,
-	}
-
-	item, ingest, _, err := backend.Add(ctx, kb, core.AddInput{
-		KBID:    "docs",
-		Title:   "设计原则",
-		Content: "统一 core，隐藏底层差异。",
-		Tags:    []string{"architecture"},
-	})
+	kb := core.KnowledgeBase{ID: "docs", StoreType: "text", StoreConfig: map[string]any{"path": dir}, Enabled: true}
+	res, err := b.MaintainIndex(context.Background(), kb, core.IndexOptions{})
 	if err != nil {
-		t.Fatalf("Add returned error: %v", err)
+		t.Fatal(err)
 	}
-	if !ingest.Success {
-		t.Fatalf("expected ingest success")
+	if res.Skipped != 1 || len(res.Warnings) != 1 {
+		t.Fatalf("expected skipped+warning, got %#v", res)
 	}
-	if item.Title != "设计原则" {
-		t.Fatalf("expected title 设计原则, got %q", item.Title)
-	}
+}
 
-	items, err := backend.ListItems(ctx, kb)
+func TestTextBackendMaintainIndexEndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.md"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := &recordingClient{}
+	idx := semantic.NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	b := text.New(text.WithIndexer(idx))
+	kb := newTextSemanticKB(dir, t.TempDir())
+
+	res, err := b.MaintainIndex(context.Background(), kb, core.IndexOptions{})
 	if err != nil {
-		t.Fatalf("ListItems returned error: %v", err)
+		t.Fatal(err)
 	}
-	if len(items) != 1 {
-		t.Fatalf("expected 1 item, got %d", len(items))
+	if res.Indexed != 1 {
+		t.Fatalf("expected 1 indexed, got %#v", res)
 	}
-	if !strings.Contains(items[0].Content, "统一 core") {
-		t.Fatalf("expected item content to include stored body, got %#v", items[0])
+	if len(c.upserts) != 1 {
+		t.Fatalf("expected 1 chunk upsert, got %d", len(c.upserts))
 	}
-
-	hits, err := backend.Search(ctx, kb, core.SearchOptions{Query: "隐藏底层", Limit: 10})
-	if err != nil {
-		t.Fatalf("Search returned error: %v", err)
+	md := c.upserts[0].Metadata
+	if md["path"] != "a.md" {
+		t.Fatalf("expected path=a.md, got %v", md["path"])
 	}
-	if len(hits) != 1 {
-		t.Fatalf("expected 1 hit, got %d", len(hits))
-	}
-
-	expectedFile := filepath.Join(dir, item.ID+".md")
-	if hits[0].Locator != expectedFile {
-		t.Fatalf("expected locator %q, got %q", expectedFile, hits[0].Locator)
+	if _, ok := md["mtime"].(int64); !ok {
+		t.Fatalf("expected mtime metadata, got %#v", md)
 	}
 }
 
