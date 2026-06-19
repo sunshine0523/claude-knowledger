@@ -9,14 +9,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/kindbrave/knowledger/internal/core"
-	"github.com/kindbrave/knowledger/internal/indexing/chroma"
+	"github.com/kindbrave/knowledger/internal/indexing/semantic"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -29,21 +26,19 @@ var fts5SQL string
 type Option func(*Backend)
 
 type Backend struct {
-	db              *sql.DB
-	ftsEnabled      bool
-	semanticFactory chroma.Factory
-	semanticMu      sync.Mutex
-	semanticClients map[string]chroma.Client
+	db         *sql.DB
+	ftsEnabled bool
+	indexer    *semantic.Indexer
 }
 
 type MultiBackend struct {
 	backends map[string]*Backend
 }
 
-func WithSemanticClientFactory(factory chroma.Factory) Option {
+func WithIndexer(idx *semantic.Indexer) Option {
 	return func(b *Backend) {
-		if factory != nil {
-			b.semanticFactory = factory
+		if idx != nil {
+			b.indexer = idx
 		}
 	}
 }
@@ -67,16 +62,14 @@ func New(path string, opts ...Option) (*Backend, error) {
 	if _, err := db.Exec(fts5SQL); err != nil {
 		ftsEnabled = false
 	}
-	backend := &Backend{
-		db:              db,
-		ftsEnabled:      ftsEnabled,
-		semanticFactory: chroma.NewClient,
-		semanticClients: map[string]chroma.Client{},
-	}
+	backend := &Backend{db: db, ftsEnabled: ftsEnabled}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(backend)
 		}
+	}
+	if backend.indexer == nil {
+		backend.indexer = semantic.NewIndexer(nil, nil)
 	}
 	return backend, nil
 }
@@ -205,6 +198,10 @@ func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 }
 
+func sqliteMeta(item core.KnowledgeItem) map[string]any {
+	return map[string]any{"mtime": item.UpdatedAt.Unix()}
+}
+
 func (b *Backend) Add(ctx context.Context, kb core.KnowledgeBase, input core.AddInput) (core.KnowledgeItem, core.IngestionResult, core.IndexStatus, error) {
 	nowTime := time.Now().UTC()
 	now := nowTime.Format(time.RFC3339)
@@ -212,16 +209,16 @@ func (b *Backend) Add(ctx context.Context, kb core.KnowledgeBase, input core.Add
 	if err != nil {
 		return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, err
 	}
-	semanticCfg, semanticEnabled := semanticConfig(kb)
+	semanticEnabled := b.indexer.SupportsKB(kb)
 
 	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {
 		return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, err
 	}
 	res, err := tx.ExecContext(ctx, `
-			INSERT INTO knowledge_items(kb_id, title, content, tags, metadata_json, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, kb.ID, input.Title, input.Content, strings.Join(input.Tags, ","), string(metadataJSON), now, now)
+				INSERT INTO knowledge_items(kb_id, title, content, tags, metadata_json, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?)
+			`, kb.ID, input.Title, input.Content, strings.Join(input.Tags, ","), string(metadataJSON), now, now)
 	if err != nil {
 		_ = tx.Rollback()
 		return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, err
@@ -249,19 +246,14 @@ func (b *Backend) Add(ctx context.Context, kb core.KnowledgeBase, input core.Add
 		return item, core.IngestionResult{Success: true, ItemID: item.ID}, core.IndexStatus{State: "not_indexed"}, nil
 	}
 
-	client, err := b.semanticClient(semanticCfg)
-	if err != nil {
-		_ = tx.Rollback()
-		return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, fmt.Errorf("semantic index failed; sqlite item rolled back: %w", err)
-	}
-	if err := client.Upsert(ctx, semanticCfg.Collection, chromaItem(item)); err != nil {
+	if err := b.indexer.UpsertItem(ctx, kb, item, sqliteMeta(item)); err != nil {
 		_ = tx.Rollback()
 		return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, fmt.Errorf("semantic index failed; sqlite item rolled back: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		cleanupCtx, cancel := cleanupContext(ctx)
 		defer cancel()
-		cleanupErr := client.Delete(cleanupCtx, semanticCfg.Collection, item.ID)
+		cleanupErr := b.indexer.DeleteItem(cleanupCtx, kb, item.ID)
 		commitErr := fmt.Errorf("sqlite commit failed after semantic index success: %w", err)
 		if cleanupErr != nil {
 			return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, errors.Join(commitErr, fmt.Errorf("semantic cleanup failed: %w", cleanupErr))
@@ -278,18 +270,56 @@ func (b *Backend) Search(ctx context.Context, kb core.KnowledgeBase, opt core.Se
 	}
 	switch opt.SearchMode {
 	case "semantic":
-		if _, ok := semanticConfig(kb); !ok {
+		if !b.indexer.SupportsKB(kb) {
 			return b.searchLexical(ctx, kb, opt.Query, limit)
 		}
-		return b.searchSemantic(ctx, kb, opt.Query, limit, "semantic")
+		return b.semanticHitsWithType(b.indexer.Search(ctx, kb, opt.Query, limit, "semantic"))
 	case "hybrid":
-		if _, ok := semanticConfig(kb); !ok {
+		if !b.indexer.SupportsKB(kb) {
 			return b.searchLexical(ctx, kb, opt.Query, limit)
 		}
-		return b.searchHybrid(ctx, kb, opt.Query, limit)
+		semanticHits, err := b.semanticHitsWithType(b.indexer.Search(ctx, kb, opt.Query, limit, "hybrid"))
+		if err != nil {
+			return nil, err
+		}
+		lexicalHits, err := b.searchLexical(ctx, kb, opt.Query, limit)
+		if err != nil {
+			return nil, err
+		}
+		return mergeHybridHits(semanticHits, lexicalHits, limit), nil
 	default:
 		return b.searchLexical(ctx, kb, opt.Query, limit)
 	}
+}
+
+func (b *Backend) semanticHitsWithType(hits []core.SearchHit, err error) ([]core.SearchHit, error) {
+	if err != nil {
+		return nil, err
+	}
+	for i := range hits {
+		hits[i].ItemType = "note"
+	}
+	return hits, nil
+}
+
+func mergeHybridHits(semanticHits, lexicalHits []core.SearchHit, limit int) []core.SearchHit {
+	merged := make([]core.SearchHit, 0, len(semanticHits)+len(lexicalHits))
+	seen := map[string]bool{}
+	for _, h := range semanticHits {
+		merged = append(merged, h)
+		seen[h.ItemID] = true
+	}
+	for _, h := range lexicalHits {
+		if seen[h.ItemID] {
+			continue
+		}
+		merged = append(merged, h)
+		seen[h.ItemID] = true
+	}
+	if limit > 0 && len(merged) > limit {
+		merged = merged[:limit]
+	}
+	return merged
 }
 
 func (b *Backend) searchLexical(ctx context.Context, kb core.KnowledgeBase, query string, limit int) ([]core.SearchHit, error) {
@@ -306,70 +336,6 @@ func (b *Backend) searchLexical(ctx context.Context, kb core.KnowledgeBase, quer
 	return b.searchLike(ctx, kb, query, limit)
 }
 
-func (b *Backend) searchSemantic(ctx context.Context, kb core.KnowledgeBase, query string, limit int, matchMode string) ([]core.SearchHit, error) {
-	cfg, ok := semanticConfig(kb)
-	if !ok {
-		return nil, nil
-	}
-	tokens := core.TokenizeQuery(query)
-	if len(tokens) == 0 {
-		return nil, nil
-	}
-	client, err := b.semanticClient(cfg)
-	if err != nil {
-		return nil, err
-	}
-	merged := map[string]chroma.Hit{}
-	for _, tok := range tokens {
-		raw, err := client.Query(ctx, cfg.Collection, tok, limit)
-		if err != nil {
-			return nil, err
-		}
-		for _, hit := range filterSemanticHits(kb.ID, raw) {
-			if prev, exists := merged[hit.ItemID]; !exists || hit.Score > prev.Score {
-				merged[hit.ItemID] = hit
-			}
-		}
-	}
-	deduped := make([]chroma.Hit, 0, len(merged))
-	for _, hit := range merged {
-		deduped = append(deduped, hit)
-	}
-	sort.Slice(deduped, func(i, j int) bool { return deduped[i].Score > deduped[j].Score })
-	if limit > 0 && len(deduped) > limit {
-		deduped = deduped[:limit]
-	}
-	return semanticSearchHits(kb.ID, matchMode, deduped), nil
-}
-
-func (b *Backend) searchHybrid(ctx context.Context, kb core.KnowledgeBase, query string, limit int) ([]core.SearchHit, error) {
-	semanticHits, err := b.searchSemantic(ctx, kb, query, limit, "hybrid")
-	if err != nil {
-		return nil, err
-	}
-	lexicalHits, err := b.searchLexical(ctx, kb, query, limit)
-	if err != nil {
-		return nil, err
-	}
-	merged := make([]core.SearchHit, 0, len(semanticHits)+len(lexicalHits))
-	seen := map[string]bool{}
-	for _, hit := range semanticHits {
-		merged = append(merged, hit)
-		seen[hit.ItemID] = true
-	}
-	for _, hit := range lexicalHits {
-		if seen[hit.ItemID] {
-			continue
-		}
-		merged = append(merged, hit)
-		seen[hit.ItemID] = true
-	}
-	if len(merged) > limit {
-		merged = merged[:limit]
-	}
-	return merged, nil
-}
-
 func (b *Backend) searchFTS(ctx context.Context, kb core.KnowledgeBase, query string, limit int) ([]core.SearchHit, error) {
 	tokens := core.TokenizeQuery(query)
 	if len(tokens) == 0 {
@@ -381,12 +347,12 @@ func (b *Backend) searchFTS(ctx context.Context, kb core.KnowledgeBase, query st
 	}
 	matchExpr := strings.Join(parts, " OR ")
 	rows, err := b.db.QueryContext(ctx, `
-			SELECT k.id, k.title, k.content
-			FROM knowledge_items_fts f
-			JOIN knowledge_items k ON k.id = f.rowid
-			WHERE knowledge_items_fts MATCH ? AND k.kb_id = ?
-			LIMIT ?
-		`, matchExpr, kb.ID, limit)
+				SELECT k.id, k.title, k.content
+				FROM knowledge_items_fts f
+				JOIN knowledge_items k ON k.id = f.rowid
+				WHERE knowledge_items_fts MATCH ? AND k.kb_id = ?
+				LIMIT ?
+			`, matchExpr, kb.ID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -409,12 +375,12 @@ func (b *Backend) searchLike(ctx context.Context, kb core.KnowledgeBase, query s
 	}
 	args = append(args, limit)
 	stmt := `
-			SELECT id, title, content
-			FROM knowledge_items
-			WHERE kb_id = ? AND (` + strings.Join(clauses, " OR ") + `)
-			ORDER BY id DESC
-			LIMIT ?
-		`
+				SELECT id, title, content
+				FROM knowledge_items
+				WHERE kb_id = ? AND (` + strings.Join(clauses, " OR ") + `)
+				ORDER BY id DESC
+				LIMIT ?
+			`
 	rows, err := b.db.QueryContext(ctx, stmt, args...)
 	if err != nil {
 		return nil, err
@@ -436,43 +402,12 @@ func scanHits(rows *sql.Rows, kbID string) ([]core.SearchHit, error) {
 	return hits, rows.Err()
 }
 
-func filterSemanticHits(kbID string, hits []chroma.Hit) []chroma.Hit {
-	out := make([]chroma.Hit, 0, len(hits))
-	for _, hit := range hits {
-		hitKBID, ok := hit.Metadata["kb_id"].(string)
-		if !ok || hitKBID != kbID {
-			continue
-		}
-		out = append(out, hit)
-	}
-	return out
-}
-
-func semanticSearchHits(kbID, matchMode string, hits []chroma.Hit) []core.SearchHit {
-	out := make([]core.SearchHit, 0, len(hits))
-	for _, hit := range hits {
-		out = append(out, core.SearchHit{
-			ItemID:         hit.ItemID,
-			KBID:           kbID,
-			ItemType:       "note",
-			Title:          hit.Title(),
-			Snippet:        hit.Content,
-			ContentPreview: hit.Content,
-			Score:          hit.Score,
-			MatchMode:      matchMode,
-			SourceBackend:  "chroma",
-			Metadata:       hit.Metadata,
-		})
-	}
-	return out
-}
-
 func (b *Backend) GetItem(ctx context.Context, kb core.KnowledgeBase, itemID string) (core.KnowledgeItem, error) {
 	row := b.db.QueryRowContext(ctx, `
-		SELECT id, title, content, tags, metadata_json, created_at, updated_at
-		FROM knowledge_items
-		WHERE kb_id = ? AND id = ?
-	`, kb.ID, itemID)
+			SELECT id, title, content, tags, metadata_json, created_at, updated_at
+			FROM knowledge_items
+			WHERE kb_id = ? AND id = ?
+		`, kb.ID, itemID)
 	item, err := scanItem(row, kb.ID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -485,11 +420,11 @@ func (b *Backend) GetItem(ctx context.Context, kb core.KnowledgeBase, itemID str
 
 func (b *Backend) ListItems(ctx context.Context, kb core.KnowledgeBase) ([]core.KnowledgeItem, error) {
 	rows, err := b.db.QueryContext(ctx, `
-		SELECT id, title, content, tags, metadata_json, created_at, updated_at
-		FROM knowledge_items
-		WHERE kb_id = ?
-		ORDER BY id DESC
-	`, kb.ID)
+			SELECT id, title, content, tags, metadata_json, created_at, updated_at
+			FROM knowledge_items
+			WHERE kb_id = ?
+			ORDER BY id DESC
+		`, kb.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -548,12 +483,12 @@ func (b *Backend) DeleteItem(ctx context.Context, kb core.KnowledgeBase, itemID 
 	}
 
 	var id int64
-	var title, content, tags, metadataJSON string
+	var title, content, tags, metadataJSON, createdAtRaw, updatedAtRaw string
 	err = tx.QueryRowContext(ctx, `
-		SELECT id, title, content, tags, metadata_json
-		FROM knowledge_items
-		WHERE kb_id = ? AND id = ?
-	`, kb.ID, itemID).Scan(&id, &title, &content, &tags, &metadataJSON)
+			SELECT id, title, content, tags, metadata_json, created_at, updated_at
+			FROM knowledge_items
+			WHERE kb_id = ? AND id = ?
+		`, kb.ID, itemID).Scan(&id, &title, &content, &tags, &metadataJSON, &createdAtRaw, &updatedAtRaw)
 	if err != nil {
 		_ = tx.Rollback()
 		if errors.Is(err, sql.ErrNoRows) {
@@ -577,25 +512,37 @@ func (b *Backend) DeleteItem(ctx context.Context, kb core.KnowledgeBase, itemID 
 		return &core.Error{Kind: core.ErrorKindStore, Message: "knowledge item not found"}
 	}
 
-	cfg, ok := semanticConfig(kb)
-	if !ok {
+	if !b.indexer.SupportsKB(kb) {
 		return tx.Commit()
 	}
-	client, err := b.semanticClient(cfg)
-	if err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	if err := client.Delete(ctx, cfg.Collection, itemID); err != nil {
+	if err := b.indexer.DeleteItem(ctx, kb, itemID); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
 	if err := tx.Commit(); err != nil {
 		metadata := map[string]any{}
 		_ = json.Unmarshal([]byte(metadataJSON), &metadata)
+		updatedAt, parseErr := time.Parse(time.RFC3339, updatedAtRaw)
+		if parseErr != nil {
+			updatedAt = time.Now().UTC()
+		}
+		createdAt, parseErr := time.Parse(time.RFC3339, createdAtRaw)
+		if parseErr != nil {
+			createdAt = updatedAt
+		}
+		restored := core.KnowledgeItem{
+			ID:        fmt.Sprintf("%d", id),
+			KBID:      kb.ID,
+			Title:     title,
+			Content:   content,
+			Tags:      splitTags(tags),
+			Metadata:  metadata,
+			CreatedAt: createdAt,
+			UpdatedAt: updatedAt,
+		}
 		cleanupCtx, cancel := cleanupContext(ctx)
 		defer cancel()
-		restoreErr := client.Upsert(cleanupCtx, cfg.Collection, chromaItem(core.KnowledgeItem{ID: fmt.Sprintf("%d", id), KBID: kb.ID, Title: title, Content: content, Tags: splitTags(tags), Metadata: metadata}))
+		restoreErr := b.indexer.UpsertItem(cleanupCtx, kb, restored, sqliteMeta(restored))
 		commitErr := fmt.Errorf("sqlite commit failed after semantic delete success: %w", err)
 		if restoreErr != nil {
 			return errors.Join(commitErr, fmt.Errorf("semantic restore failed: %w", restoreErr))
@@ -606,57 +553,9 @@ func (b *Backend) DeleteItem(ctx context.Context, kb core.KnowledgeBase, itemID 
 }
 
 func (b *Backend) MaintainIndex(ctx context.Context, kb core.KnowledgeBase, opt core.IndexOptions) (core.IndexResult, error) {
-	cfg, ok := semanticConfig(kb)
-	if !ok {
-		return core.IndexResult{Skipped: 1, Warnings: []string{fmt.Sprintf("%s: semantic indexing is not enabled", kb.ID)}}, nil
-	}
-	client, err := b.semanticClient(cfg)
-	if err != nil {
-		return core.IndexResult{}, &core.Error{Kind: core.ErrorKindIndex, Message: "semantic index client unavailable", Cause: err}
-	}
-	items, err := b.ListItems(ctx, kb)
-	if err != nil {
-		return core.IndexResult{}, err
-	}
-
-	result := core.IndexResult{}
-	if opt.Rebuild {
-		deleted, err := deleteSemanticItems(ctx, client, cfg.Collection, kb.ID, items)
-		if err != nil {
-			return result, &core.Error{Kind: core.ErrorKindIndex, Message: "semantic index rebuild delete failed", Cause: err}
-		}
-		result.Deleted = deleted
-	}
-	for _, item := range items {
-		if err := client.Upsert(ctx, cfg.Collection, chromaItem(item)); err != nil {
-			return result, &core.Error{Kind: core.ErrorKindIndex, Message: fmt.Sprintf("semantic index upsert failed for item %s", item.ID), Cause: err}
-		}
-		result.Indexed++
-	}
-	return result, nil
-}
-
-type knowledgeBaseSemanticDeleter interface {
-	DeleteForKnowledgeBase(context.Context, string, string) error
-}
-
-func deleteSemanticItems(ctx context.Context, client chroma.Client, collection string, kbID string, items []core.KnowledgeItem) (int, error) {
-	if deleter, ok := client.(knowledgeBaseSemanticDeleter); ok {
-		if err := deleter.DeleteForKnowledgeBase(ctx, collection, kbID); err != nil {
-			return 0, err
-		}
-		return len(items), nil
-	}
-	for _, item := range items {
-		if err := client.Delete(ctx, collection, item.ID); err != nil {
-			return 0, err
-		}
-	}
-	return len(items), nil
-}
-
-func chromaItem(item core.KnowledgeItem) chroma.Item {
-	return chroma.Item{ID: item.ID, KBID: item.KBID, Title: item.Title, Content: item.Content, Tags: item.Tags, Metadata: item.Metadata}
+	return b.indexer.MaintainIndex(ctx, kb, opt,
+		func(c context.Context) ([]core.KnowledgeItem, error) { return b.ListItems(c, kb) },
+		func(item core.KnowledgeItem) map[string]any { return sqliteMeta(item) })
 }
 
 func splitTags(tags string) []string {
@@ -675,88 +574,12 @@ func splitTags(tags string) []string {
 }
 
 func (b *Backend) SupportsSemantic(kb core.KnowledgeBase) bool {
-	_, ok := semanticConfig(kb)
-	return ok
+	return b.indexer != nil && b.indexer.SupportsKB(kb)
 }
 
 func (b *Backend) Close() error {
-	b.semanticMu.Lock()
-	clients := make([]chroma.Client, 0, len(b.semanticClients))
-	for _, client := range b.semanticClients {
-		clients = append(clients, client)
-	}
-	b.semanticClients = nil
-	b.semanticMu.Unlock()
-
-	var err error
-	for _, client := range clients {
-		err = errors.Join(err, client.Close())
-	}
 	if b.db != nil {
-		err = errors.Join(err, b.db.Close())
+		return b.db.Close()
 	}
-	return err
-}
-
-func (b *Backend) semanticClient(cfg chroma.Config) (chroma.Client, error) {
-	b.semanticMu.Lock()
-	defer b.semanticMu.Unlock()
-
-	if b.semanticClients == nil {
-		b.semanticClients = map[string]chroma.Client{}
-	}
-	key := semanticClientKey(cfg)
-	if client := b.semanticClients[key]; client != nil {
-		return client, nil
-	}
-	factory := b.semanticFactory
-	if factory == nil {
-		factory = chroma.NewClient
-	}
-	client, err := factory(cfg)
-	if err != nil {
-		return nil, err
-	}
-	b.semanticClients[key] = client
-	return client, nil
-}
-
-func semanticClientKey(cfg chroma.Config) string {
-	return strings.Join([]string{cfg.EffectiveMode(), cfg.BaseURL, cfg.Path, strconv.FormatBool(cfg.AutoDownload)}, "\x00")
-}
-
-func semanticConfig(kb core.KnowledgeBase) (chroma.Config, bool) {
-	semanticRaw, ok := kb.Indexing["semantic"]
-	if !ok {
-		return chroma.Config{}, false
-	}
-	semantic, ok := semanticRaw.(map[string]any)
-	if !ok {
-		return chroma.Config{}, false
-	}
-	enabled, _ := semantic["enabled"].(bool)
-	if !enabled {
-		return chroma.Config{}, false
-	}
-	provider, _ := semantic["provider"].(string)
-	if !strings.EqualFold(provider, "chroma") {
-		return chroma.Config{}, false
-	}
-
-	cfg := chroma.Config{Collection: kb.ID, AutoDownload: true}
-	cfg.Mode = stringValue(semantic["mode"])
-	cfg.BaseURL = stringValue(semantic["base_url"])
-	cfg.Path = stringValue(semantic["path"])
-	if collection := stringValue(semantic["collection"]); collection != "" {
-		cfg.Collection = collection
-	}
-	if autoDownload, ok := semantic["auto_download"].(bool); ok {
-		cfg.AutoDownload = autoDownload
-	}
-	return cfg, true
-}
-
-func stringValue(value any) string {
-	out, _ := value.(string)
-	return out
+	return nil
 }

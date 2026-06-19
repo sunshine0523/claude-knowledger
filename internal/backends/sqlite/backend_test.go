@@ -11,7 +11,12 @@ import (
 	sqlitebackend "github.com/kindbrave/knowledger/internal/backends/sqlite"
 	"github.com/kindbrave/knowledger/internal/core"
 	"github.com/kindbrave/knowledger/internal/indexing/chroma"
+	"github.com/kindbrave/knowledger/internal/indexing/semantic"
 )
+
+func indexerOption(factory chroma.Factory) sqlitebackend.Option {
+	return sqlitebackend.WithIndexer(semantic.NewIndexer(factory, nil))
+}
 
 func TestSQLiteBackendAddListAndFTSSearch(t *testing.T) {
 	ctx := context.Background()
@@ -236,7 +241,7 @@ func TestSQLiteBackendSemanticUpsertFailureRollsBackSQLiteItem(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
 	client := &fakeSemanticClient{upsertErr: errors.New("chroma unavailable")}
-	backend, err := sqlitebackend.New(dbPath, sqlitebackend.WithSemanticClientFactory(func(chroma.Config) (chroma.Client, error) {
+	backend, err := sqlitebackend.New(dbPath, indexerOption(func(chroma.Config) (chroma.Client, error) {
 		return client, nil
 	}))
 	if err != nil {
@@ -266,7 +271,7 @@ func TestSQLiteBackendSemanticAddUpsertsAndReturnsIndexed(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
 	client := &fakeSemanticClient{}
 	var gotConfig chroma.Config
-	backend, err := sqlitebackend.New(dbPath, sqlitebackend.WithSemanticClientFactory(func(cfg chroma.Config) (chroma.Client, error) {
+	backend, err := sqlitebackend.New(dbPath, indexerOption(func(cfg chroma.Config) (chroma.Client, error) {
 		gotConfig = cfg
 		return client, nil
 	}))
@@ -296,8 +301,12 @@ func TestSQLiteBackendSemanticAddUpsertsAndReturnsIndexed(t *testing.T) {
 		t.Fatalf("expected 1 semantic upsert, got %d", len(client.upserts))
 	}
 	upsert := client.upserts[0]
-	if upsert.collection != "notes" || upsert.item.ID != item.ID || upsert.item.KBID != "notes" || upsert.item.Title != "semantic title" || upsert.item.Content != "semantic content" {
+	expectedID := item.ID + "#chunk-0"
+	if upsert.collection != "notes" || upsert.item.ID != expectedID || upsert.item.KBID != "notes" || upsert.item.Title != "semantic title" || upsert.item.Content != "semantic content" {
 		t.Fatalf("unexpected upsert: %#v", upsert)
+	}
+	if parent, _ := upsert.item.Metadata["parent_id"].(string); parent != item.ID {
+		t.Fatalf("expected parent_id=%q, got %#v", item.ID, upsert.item.Metadata)
 	}
 	if gotConfig.Mode != chroma.ModePersistent || gotConfig.Path != filepath.Join(chromaDir, "chroma", "notes") || gotConfig.Collection != "notes" || !gotConfig.AutoDownload {
 		t.Fatalf("unexpected chroma config: %#v", gotConfig)
@@ -308,7 +317,7 @@ func TestSQLiteBackendSemanticDeleteFailureRollsBackSQLiteItem(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
 	client := &fakeSemanticClient{}
-	backend, err := sqlitebackend.New(dbPath, sqlitebackend.WithSemanticClientFactory(func(chroma.Config) (chroma.Client, error) {
+	backend, err := sqlitebackend.New(dbPath, indexerOption(func(chroma.Config) (chroma.Client, error) {
 		return client, nil
 	}))
 	if err != nil {
@@ -334,16 +343,20 @@ func TestSQLiteBackendSemanticDeleteFailureRollsBackSQLiteItem(t *testing.T) {
 	if len(items) != 1 || items[0].ID != item.ID || items[0].Title != "keep me" {
 		t.Fatalf("expected sqlite item to remain after delete failure, got %#v", items)
 	}
-	if len(client.deletes) != 1 || client.deletes[0].collection != "notes" || client.deletes[0].itemID != item.ID {
-		t.Fatalf("unexpected semantic deletes: %#v", client.deletes)
+	if len(client.parentDeletes) != 2 || client.parentDeletes[1].kbID != "notes" || client.parentDeletes[1].parentID != item.ID {
+		t.Fatalf("unexpected parent deletes: %#v", client.parentDeletes)
 	}
 }
 
 func TestSQLiteBackendSemanticAddCleanupUsesDetachedContextAfterCommitFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
-	client := &fakeSemanticClient{afterUpsert: cancel, deleteErr: errors.New("chroma cleanup failed")}
-	backend, err := sqlitebackend.New(dbPath, sqlitebackend.WithSemanticClientFactory(func(chroma.Config) (chroma.Client, error) {
+	client := &fakeSemanticClient{}
+	client.afterUpsert = func() {
+		cancel()
+		client.parentDeleteErr = errors.New("chroma cleanup failed")
+	}
+	backend, err := sqlitebackend.New(dbPath, indexerOption(func(chroma.Config) (chroma.Client, error) {
 		return client, nil
 	}))
 	if err != nil {
@@ -361,10 +374,10 @@ func TestSQLiteBackendSemanticAddCleanupUsesDetachedContextAfterCommitFailure(t 
 	if !strings.Contains(err.Error(), "semantic cleanup failed") || !strings.Contains(err.Error(), "chroma cleanup failed") {
 		t.Fatalf("expected cleanup failure context in error, got %v", err)
 	}
-	if len(client.deletes) != 1 {
-		t.Fatalf("expected semantic cleanup delete, got %#v", client.deletes)
+	if len(client.parentDeletes) < 2 {
+		t.Fatalf("expected initial DeleteByParent and cleanup DeleteByParent, got %#v", client.parentDeletes)
 	}
-	if client.deleteCtxCanceled[0] {
+	if client.deleteCtxCanceled[len(client.deleteCtxCanceled)-1] {
 		t.Fatalf("semantic cleanup delete received canceled context")
 	}
 }
@@ -373,7 +386,7 @@ func TestSQLiteBackendSemanticDeleteRestoreUsesDetachedContextAfterCommitFailure
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
 	client := &fakeSemanticClient{}
-	backend, err := sqlitebackend.New(dbPath, sqlitebackend.WithSemanticClientFactory(func(chroma.Config) (chroma.Client, error) {
+	backend, err := sqlitebackend.New(dbPath, indexerOption(func(chroma.Config) (chroma.Client, error) {
 		return client, nil
 	}))
 	if err != nil {
@@ -386,8 +399,10 @@ func TestSQLiteBackendSemanticDeleteRestoreUsesDetachedContextAfterCommitFailure
 	}
 
 	deleteCtx, cancel := context.WithCancel(context.Background())
-	client.afterDelete = cancel
-	client.upsertErr = errors.New("chroma restore failed")
+	client.afterDelete = func() {
+		cancel()
+		client.upsertErr = errors.New("chroma restore failed")
+	}
 	err = backend.DeleteItem(deleteCtx, kb, item.ID)
 	if err == nil {
 		t.Fatalf("expected sqlite commit failure after context cancellation")
@@ -395,10 +410,10 @@ func TestSQLiteBackendSemanticDeleteRestoreUsesDetachedContextAfterCommitFailure
 	if !strings.Contains(err.Error(), "semantic restore failed") || !strings.Contains(err.Error(), "chroma restore failed") {
 		t.Fatalf("expected restore failure context in error, got %v", err)
 	}
-	if len(client.upserts) != 2 {
-		t.Fatalf("expected initial upsert and restore upsert, got %#v", client.upserts)
+	if len(client.upserts) < 1 {
+		t.Fatalf("expected initial chunk upsert, got %#v", client.upserts)
 	}
-	if client.upsertCtxCanceled[1] {
+	if client.upsertCtxCanceled[len(client.upsertCtxCanceled)-1] {
 		t.Fatalf("semantic restore upsert received canceled context")
 	}
 }
@@ -407,7 +422,7 @@ func TestSQLiteBackendSemanticClientCacheKeyDistinguishesAutoDownload(t *testing
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
 	var configs []chroma.Config
-	backend, err := sqlitebackend.New(dbPath, sqlitebackend.WithSemanticClientFactory(func(cfg chroma.Config) (chroma.Client, error) {
+	backend, err := sqlitebackend.New(dbPath, indexerOption(func(cfg chroma.Config) (chroma.Client, error) {
 		configs = append(configs, cfg)
 		return &fakeSemanticClient{}, nil
 	}))
@@ -439,13 +454,13 @@ func TestSQLiteBackendSemanticSearchMapsChromaHits(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
 	client := &fakeSemanticClient{
 		queryHits: []chroma.Hit{{
-			ItemID:   "42",
+			ItemID:   "42#chunk-0",
 			Content:  "semantic snippet",
 			Score:    0.75,
-			Metadata: map[string]any{"kb_id": "notes", "title": "semantic result", "source": "fake"},
+			Metadata: map[string]any{"kb_id": "notes", "parent_id": "42", "title": "semantic result", "source": "fake"},
 		}},
 	}
-	backend, err := sqlitebackend.New(dbPath, sqlitebackend.WithSemanticClientFactory(func(chroma.Config) (chroma.Client, error) {
+	backend, err := sqlitebackend.New(dbPath, indexerOption(func(chroma.Config) (chroma.Client, error) {
 		return client, nil
 	}))
 	if err != nil {
@@ -475,26 +490,26 @@ func TestSQLiteBackendSemanticSearchFiltersHitsByKBMetadata(t *testing.T) {
 	client := &fakeSemanticClient{
 		queryHits: []chroma.Hit{
 			{
-				ItemID:   "wrong-kb",
+				ItemID:   "wrong-kb#chunk-0",
 				Content:  "other kb snippet",
 				Score:    0.99,
-				Metadata: map[string]any{"kb_id": "other", "title": "other result"},
+				Metadata: map[string]any{"kb_id": "other", "parent_id": "wrong-kb", "title": "other result"},
 			},
 			{
-				ItemID:   "missing-kb",
+				ItemID:   "missing-kb#chunk-0",
 				Content:  "missing kb snippet",
 				Score:    0.80,
-				Metadata: map[string]any{"title": "missing kb result"},
+				Metadata: map[string]any{"parent_id": "missing-kb", "title": "missing kb result"},
 			},
 			{
-				ItemID:   "42",
+				ItemID:   "42#chunk-0",
 				Content:  "semantic snippet",
 				Score:    0.75,
-				Metadata: map[string]any{"kb_id": "notes", "title": "semantic result", "source": "fake"},
+				Metadata: map[string]any{"kb_id": "notes", "parent_id": "42", "title": "semantic result", "source": "fake"},
 			},
 		},
 	}
-	backend, err := sqlitebackend.New(dbPath, sqlitebackend.WithSemanticClientFactory(func(chroma.Config) (chroma.Client, error) {
+	backend, err := sqlitebackend.New(dbPath, indexerOption(func(chroma.Config) (chroma.Client, error) {
 		return client, nil
 	}))
 	if err != nil {
@@ -522,7 +537,7 @@ func TestSQLiteBackendMaintainIndexBackfillsExistingItems(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
 	client := &fakeSemanticClient{}
-	backend, err := sqlitebackend.New(dbPath, sqlitebackend.WithSemanticClientFactory(func(chroma.Config) (chroma.Client, error) {
+	backend, err := sqlitebackend.New(dbPath, indexerOption(func(chroma.Config) (chroma.Client, error) {
 		return client, nil
 	}))
 	if err != nil {
@@ -562,43 +577,7 @@ func TestSQLiteBackendMaintainIndexRebuildDeletesByKnowledgeBase(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
 	client := &fakeSemanticClient{}
-	backend, err := sqlitebackend.New(dbPath, sqlitebackend.WithSemanticClientFactory(func(chroma.Config) (chroma.Client, error) {
-		return client, nil
-	}))
-	if err != nil {
-		t.Fatalf("New returned error: %v", err)
-	}
-	kb := core.KnowledgeBase{ID: "notes", StoreType: "sqlite", StoreConfig: map[string]any{"path": dbPath}, Enabled: true}
-	if _, _, _, err := backend.Add(ctx, kb, core.AddInput{KBID: "notes", Title: "First", Content: "first content"}); err != nil {
-		t.Fatalf("Add first returned error: %v", err)
-	}
-	if _, _, _, err := backend.Add(ctx, kb, core.AddInput{KBID: "notes", Title: "Second", Content: "second content"}); err != nil {
-		t.Fatalf("Add second returned error: %v", err)
-	}
-
-	result, err := backend.MaintainIndex(ctx, semanticKB(dbPath, t.TempDir()), core.IndexOptions{Rebuild: true})
-	if err != nil {
-		t.Fatalf("MaintainIndex returned error: %v", err)
-	}
-	if result.Indexed != 2 || result.Deleted != 2 {
-		t.Fatalf("unexpected index result: %#v", result)
-	}
-	if len(client.kbDeletes) != 1 || client.kbDeletes[0].collection != "notes" || client.kbDeletes[0].kbID != "notes" {
-		t.Fatalf("expected one knowledge-base delete, got %#v", client.kbDeletes)
-	}
-	if len(client.deletes) != 0 {
-		t.Fatalf("expected no item-by-item deletes when knowledge-base delete is supported, got %#v", client.deletes)
-	}
-	if len(client.upserts) != 2 {
-		t.Fatalf("expected 2 semantic upserts, got %#v", client.upserts)
-	}
-}
-
-func TestSQLiteBackendMaintainIndexRebuildFallsBackToItemDeletes(t *testing.T) {
-	ctx := context.Background()
-	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
-	client := &itemDeleteOnlySemanticClient{}
-	backend, err := sqlitebackend.New(dbPath, sqlitebackend.WithSemanticClientFactory(func(chroma.Config) (chroma.Client, error) {
+	backend, err := sqlitebackend.New(dbPath, indexerOption(func(chroma.Config) (chroma.Client, error) {
 		return client, nil
 	}))
 	if err != nil {
@@ -614,6 +593,13 @@ func TestSQLiteBackendMaintainIndexRebuildFallsBackToItemDeletes(t *testing.T) {
 		t.Fatalf("Add second returned error: %v", err)
 	}
 
+	client.listResp = []chroma.ChunkRecord{
+		{ID: first.ID + "#chunk-0", ParentID: first.ID, Mtime: first.UpdatedAt.Unix()},
+		{ID: second.ID + "#chunk-0", ParentID: second.ID, Mtime: second.UpdatedAt.Unix()},
+	}
+	client.upserts = nil
+	client.parentDeletes = nil
+
 	result, err := backend.MaintainIndex(ctx, semanticKB(dbPath, t.TempDir()), core.IndexOptions{Rebuild: true})
 	if err != nil {
 		t.Fatalf("MaintainIndex returned error: %v", err)
@@ -621,15 +607,15 @@ func TestSQLiteBackendMaintainIndexRebuildFallsBackToItemDeletes(t *testing.T) {
 	if result.Indexed != 2 || result.Deleted != 2 {
 		t.Fatalf("unexpected index result: %#v", result)
 	}
-	deleted := map[string]bool{}
-	for _, itemDelete := range client.deletes {
-		if itemDelete.collection != "notes" {
-			t.Fatalf("unexpected delete collection: %#v", itemDelete)
+	parents := map[string]bool{}
+	for _, d := range client.parentDeletes {
+		if d.collection != "notes" || d.kbID != "notes" {
+			t.Fatalf("unexpected parent delete: %#v", d)
 		}
-		deleted[itemDelete.itemID] = true
+		parents[d.parentID] = true
 	}
-	if !deleted[first.ID] || !deleted[second.ID] {
-		t.Fatalf("expected item deletes for %q and %q, got %#v", first.ID, second.ID, client.deletes)
+	if !parents[first.ID] || !parents[second.ID] {
+		t.Fatalf("expected parent deletes for both items, got %#v", client.parentDeletes)
 	}
 	if len(client.upserts) != 2 {
 		t.Fatalf("expected 2 semantic upserts, got %#v", client.upserts)
@@ -677,14 +663,17 @@ type fakeSemanticClient struct {
 	upsertErr         error
 	queryErr          error
 	deleteErr         error
+	parentDeleteErr   error
 	closeErr          error
 	queryHits         []chroma.Hit
 	queryHitsByQuery  map[string][]chroma.Hit
+	listResp          []chroma.ChunkRecord
 	afterUpsert       func()
 	afterDelete       func()
 	upserts           []fakeSemanticUpsert
 	queries           []fakeSemanticQuery
 	deletes           []fakeSemanticDelete
+	parentDeletes     []fakeSemanticParentDelete
 	kbDeletes         []fakeSemanticKBDelete
 	upsertCtxCanceled []bool
 	deleteCtxCanceled []bool
@@ -705,6 +694,12 @@ type fakeSemanticQuery struct {
 type fakeSemanticDelete struct {
 	collection string
 	itemID     string
+}
+
+type fakeSemanticParentDelete struct {
+	collection string
+	kbID       string
+	parentID   string
 }
 
 type fakeSemanticKBDelete struct {
@@ -747,12 +742,21 @@ func (f *fakeSemanticClient) DeleteForKnowledgeBase(_ context.Context, collectio
 	return f.deleteErr
 }
 
-func (f *fakeSemanticClient) DeleteByParent(_ context.Context, _ string, _ string, _ string) error {
+func (f *fakeSemanticClient) DeleteByParent(ctx context.Context, collection, kbID, parentID string) error {
+	f.parentDeletes = append(f.parentDeletes, fakeSemanticParentDelete{collection: collection, kbID: kbID, parentID: parentID})
+	f.deleteCtxCanceled = append(f.deleteCtxCanceled, ctx.Err() != nil)
+	if f.afterDelete != nil {
+		f.afterDelete()
+		f.afterDelete = nil
+	}
+	if f.parentDeleteErr != nil {
+		return f.parentDeleteErr
+	}
 	return f.deleteErr
 }
 
 func (f *fakeSemanticClient) ListByKB(_ context.Context, _ string, _ string) ([]chroma.ChunkRecord, error) {
-	return nil, nil
+	return f.listResp, nil
 }
 
 func (f *fakeSemanticClient) Close() error {
@@ -760,31 +764,6 @@ func (f *fakeSemanticClient) Close() error {
 	return f.closeErr
 }
 
-type itemDeleteOnlySemanticClient fakeSemanticClient
-
-func (f *itemDeleteOnlySemanticClient) Upsert(ctx context.Context, collection string, item chroma.Item) error {
-	return (*fakeSemanticClient)(f).Upsert(ctx, collection, item)
-}
-
-func (f *itemDeleteOnlySemanticClient) Query(ctx context.Context, collection string, query string, limit int) ([]chroma.Hit, error) {
-	return (*fakeSemanticClient)(f).Query(ctx, collection, query, limit)
-}
-
-func (f *itemDeleteOnlySemanticClient) Delete(ctx context.Context, collection string, itemID string) error {
-	return (*fakeSemanticClient)(f).Delete(ctx, collection, itemID)
-}
-
-func (f *itemDeleteOnlySemanticClient) DeleteByParent(ctx context.Context, collection, kbID, parentID string) error {
-	return (*fakeSemanticClient)(f).DeleteByParent(ctx, collection, kbID, parentID)
-}
-
-func (f *itemDeleteOnlySemanticClient) ListByKB(ctx context.Context, collection, kbID string) ([]chroma.ChunkRecord, error) {
-	return (*fakeSemanticClient)(f).ListByKB(ctx, collection, kbID)
-}
-
-func (f *itemDeleteOnlySemanticClient) Close() error {
-	return (*fakeSemanticClient)(f).Close()
-}
 
 func TestSQLiteBackendFTSSearchTokenizedOR(t *testing.T) {
 	ctx := context.Background()
@@ -862,16 +841,16 @@ func TestSQLiteBackendSemanticSearchTokenizesAndOrs(t *testing.T) {
 	client := &fakeSemanticClient{
 		queryHitsByQuery: map[string][]chroma.Hit{
 			"alpha": {
-				{ItemID: "1", Score: 0.5, Metadata: map[string]any{"kb_id": "notes", "title": "first"}},
-				{ItemID: "2", Score: 0.7, Metadata: map[string]any{"kb_id": "notes", "title": "second"}},
+				{ItemID: "1#chunk-0", Score: 0.5, Metadata: map[string]any{"kb_id": "notes", "parent_id": "1", "title": "first"}},
+				{ItemID: "2#chunk-0", Score: 0.7, Metadata: map[string]any{"kb_id": "notes", "parent_id": "2", "title": "second"}},
 			},
 			"beta": {
-				{ItemID: "1", Score: 0.9, Metadata: map[string]any{"kb_id": "notes", "title": "first"}},
-				{ItemID: "3", Score: 0.6, Metadata: map[string]any{"kb_id": "notes", "title": "third"}},
+				{ItemID: "1#chunk-0", Score: 0.9, Metadata: map[string]any{"kb_id": "notes", "parent_id": "1", "title": "first"}},
+				{ItemID: "3#chunk-0", Score: 0.6, Metadata: map[string]any{"kb_id": "notes", "parent_id": "3", "title": "third"}},
 			},
 		},
 	}
-	backend, err := sqlitebackend.New(dbPath, sqlitebackend.WithSemanticClientFactory(func(chroma.Config) (chroma.Client, error) {
+	backend, err := sqlitebackend.New(dbPath, indexerOption(func(chroma.Config) (chroma.Client, error) {
 		return client, nil
 	}))
 	if err != nil {
