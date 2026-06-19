@@ -1,11 +1,14 @@
 package semantic
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/kindbrave/knowledger/internal/core"
 	"github.com/kindbrave/knowledger/internal/indexing/chroma"
 	"github.com/kindbrave/knowledger/internal/indexing/chunking"
 )
@@ -63,4 +66,62 @@ func (idx *Indexer) client(cfg chroma.Config) (chroma.Client, error) {
 
 func clientKey(cfg chroma.Config) string {
 	return strings.Join([]string{cfg.EffectiveMode(), cfg.BaseURL, cfg.Path, strconv.FormatBool(cfg.AutoDownload)}, "\x00")
+}
+
+func (idx *Indexer) UpsertItem(ctx context.Context, kb core.KnowledgeBase, item core.KnowledgeItem, extraMeta map[string]any) error {
+	cfg, ok := idx.configFor(kb)
+	if !ok {
+		return nil
+	}
+	client, err := idx.client(cfg)
+	if err != nil {
+		return err
+	}
+	chunks := idx.splitter.Split(item.Content)
+	if len(chunks) == 0 {
+		return nil
+	}
+	if err := client.DeleteByParent(ctx, cfg.Collection, kb.ID, item.ID); err != nil {
+		return err
+	}
+	for _, c := range chunks {
+		if err := client.Upsert(ctx, cfg.Collection, buildChromaItem(kb, item, c, extraMeta)); err != nil {
+			_ = client.DeleteByParent(ctx, cfg.Collection, kb.ID, item.ID)
+			return fmt.Errorf("semantic upsert failed for item %s chunk %d/%d: %w", item.ID, c.Index, c.Total, err)
+		}
+	}
+	return nil
+}
+
+func (idx *Indexer) DeleteItem(ctx context.Context, kb core.KnowledgeBase, itemID string) error {
+	cfg, ok := idx.configFor(kb)
+	if !ok {
+		return nil
+	}
+	client, err := idx.client(cfg)
+	if err != nil {
+		return err
+	}
+	return client.DeleteByParent(ctx, cfg.Collection, kb.ID, itemID)
+}
+
+func buildChromaItem(kb core.KnowledgeBase, item core.KnowledgeItem, c chunking.Chunk, extraMeta map[string]any) chroma.Item {
+	metadata := make(map[string]any, len(item.Metadata)+len(extraMeta)+3)
+	for k, v := range item.Metadata {
+		metadata[k] = v
+	}
+	for k, v := range extraMeta {
+		metadata[k] = v
+	}
+	metadata["parent_id"] = item.ID
+	metadata["chunk_index"] = c.Index
+	metadata["chunk_total"] = c.Total
+	return chroma.Item{
+		ID:       fmt.Sprintf("%s#chunk-%d", item.ID, c.Index),
+		KBID:     kb.ID,
+		Title:    item.Title,
+		Content:  c.Text,
+		Tags:     item.Tags,
+		Metadata: metadata,
+	}
 }

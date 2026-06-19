@@ -137,3 +137,68 @@ func (f *fakeClient) ListByKB(_ context.Context, _, _ string) ([]chroma.ChunkRec
 	return f.listResp, f.listErr
 }
 func (f *fakeClient) Close() error { f.closed = true; return nil }
+
+func TestUpsertItemSplitsAndUpserts(t *testing.T) {
+	c := &fakeClient{}
+	idx := NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	kb := semanticKB("notes", "/tmp/c")
+	item := core.KnowledgeItem{ID: "42", KBID: "notes", Title: "T", Content: "short content"}
+
+	if err := idx.UpsertItem(context.Background(), kb, item, map[string]any{"mtime": int64(123)}); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.upserts) != 1 {
+		t.Fatalf("expected 1 upsert (short content -> 1 chunk), got %d", len(c.upserts))
+	}
+	got := c.upserts[0].item
+	if got.ID != "42#chunk-0" {
+		t.Fatalf("expected chunk id 42#chunk-0, got %q", got.ID)
+	}
+	if got.Metadata["parent_id"] != "42" || got.Metadata["chunk_index"] != 0 || got.Metadata["chunk_total"] != 1 {
+		t.Fatalf("bad chunk metadata: %#v", got.Metadata)
+	}
+	if got.Metadata["mtime"] != int64(123) {
+		t.Fatalf("expected extraMeta mtime=123, got %#v", got.Metadata["mtime"])
+	}
+	if len(c.deletesByPar) != 1 || c.deletesByPar[0].Parent != "42" {
+		t.Fatalf("expected DeleteByParent called once before upsert, got %#v", c.deletesByPar)
+	}
+}
+
+func TestUpsertItemRollsBackOnPartialFailure(t *testing.T) {
+	c := &fakeClient{upsertErr: errors.New("boom")}
+	idx := NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	kb := semanticKB("notes", "/tmp/c")
+	item := core.KnowledgeItem{ID: "42", KBID: "notes", Content: "x"}
+
+	if err := idx.UpsertItem(context.Background(), kb, item, nil); err == nil {
+		t.Fatal("expected error")
+	}
+	if len(c.deletesByPar) != 2 {
+		t.Fatalf("expected DeleteByParent called twice, got %d", len(c.deletesByPar))
+	}
+}
+
+func TestDeleteItemRoutesToDeleteByParent(t *testing.T) {
+	c := &fakeClient{}
+	idx := NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	kb := semanticKB("notes", "/tmp/c")
+	if err := idx.DeleteItem(context.Background(), kb, "42"); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.deletesByPar) != 1 || c.deletesByPar[0].Parent != "42" || c.deletesByPar[0].KB != "notes" {
+		t.Fatalf("unexpected deletesByPar: %#v", c.deletesByPar)
+	}
+}
+
+func TestUpsertItemNoopWhenSemanticDisabled(t *testing.T) {
+	c := &fakeClient{}
+	idx := NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	kb := core.KnowledgeBase{ID: "x", Indexing: map[string]any{}}
+	if err := idx.UpsertItem(context.Background(), kb, core.KnowledgeItem{ID: "1", Content: "y"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.upserts) != 0 || len(c.deletesByPar) != 0 {
+		t.Fatalf("expected no calls when semantic disabled, got upserts=%d deletes=%d", len(c.upserts), len(c.deletesByPar))
+	}
+}
