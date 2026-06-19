@@ -54,7 +54,16 @@ type Client interface {
 	Upsert(ctx context.Context, collection string, item Item) error
 	Query(ctx context.Context, collection string, query string, limit int) ([]Hit, error)
 	Delete(ctx context.Context, collection string, itemID string) error
+	DeleteByParent(ctx context.Context, collection, kbID, parentID string) error
+	ListByKB(ctx context.Context, collection, kbID string) ([]ChunkRecord, error)
 	Close() error
+}
+
+type ChunkRecord struct {
+	ID       string
+	ParentID string
+	Path     string
+	Mtime    int64
 }
 
 type Factory func(Config) (Client, error)
@@ -179,6 +188,66 @@ func (c *client) DeleteForKnowledgeBase(ctx context.Context, collection string, 
 	}
 
 	return col.Delete(ctx, chromav2.WithWhere(chromav2.EqString(chromav2.K("kb_id"), kbID)))
+}
+
+func (c *client) DeleteByParent(ctx context.Context, collection, kbID, parentID string) error {
+	if kbID == "" || parentID == "" {
+		return fmt.Errorf("kbID and parentID are required")
+	}
+	col, err := c.collection(ctx, collection)
+	if err != nil {
+		return err
+	}
+	return col.Delete(ctx, chromav2.WithWhere(chromav2.And(
+		chromav2.EqString(chromav2.K("kb_id"), kbID),
+		chromav2.EqString(chromav2.K("parent_id"), parentID),
+	)))
+}
+
+func (c *client) ListByKB(ctx context.Context, collection, kbID string) ([]ChunkRecord, error) {
+	if kbID == "" {
+		return nil, fmt.Errorf("kbID is required")
+	}
+	col, err := c.collection(ctx, collection)
+	if err != nil {
+		return nil, err
+	}
+	result, err := col.Get(ctx,
+		chromav2.WithWhere(chromav2.EqString(chromav2.K("kb_id"), kbID)),
+		chromav2.WithInclude(chromav2.IncludeMetadatas),
+	)
+	if err != nil {
+		return nil, err
+	}
+	ids := result.GetIDs()
+	metas := result.GetMetadatas()
+	out := make([]ChunkRecord, 0, len(ids))
+	for i, id := range ids {
+		var md map[string]any
+		if i < len(metas) {
+			md = documentMetadataMap(metas[i])
+		} else {
+			md = map[string]any{}
+		}
+		parent, _ := md["parent_id"].(string)
+		path, _ := md["path"].(string)
+		var mtime int64
+		switch v := md["mtime"].(type) {
+		case int64:
+			mtime = v
+		case float64:
+			mtime = int64(v)
+		case int:
+			mtime = int64(v)
+		}
+		out = append(out, ChunkRecord{
+			ID:       string(id),
+			ParentID: parent,
+			Path:     path,
+			Mtime:    mtime,
+		})
+	}
+	return out, nil
 }
 
 func (c *client) Close() error {

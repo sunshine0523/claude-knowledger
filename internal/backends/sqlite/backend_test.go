@@ -747,6 +747,14 @@ func (f *fakeSemanticClient) DeleteForKnowledgeBase(_ context.Context, collectio
 	return f.deleteErr
 }
 
+func (f *fakeSemanticClient) DeleteByParent(_ context.Context, _ string, _ string, _ string) error {
+	return f.deleteErr
+}
+
+func (f *fakeSemanticClient) ListByKB(_ context.Context, _ string, _ string) ([]chroma.ChunkRecord, error) {
+	return nil, nil
+}
+
 func (f *fakeSemanticClient) Close() error {
 	f.closed = true
 	return f.closeErr
@@ -764,6 +772,14 @@ func (f *itemDeleteOnlySemanticClient) Query(ctx context.Context, collection str
 
 func (f *itemDeleteOnlySemanticClient) Delete(ctx context.Context, collection string, itemID string) error {
 	return (*fakeSemanticClient)(f).Delete(ctx, collection, itemID)
+}
+
+func (f *itemDeleteOnlySemanticClient) DeleteByParent(ctx context.Context, collection, kbID, parentID string) error {
+	return (*fakeSemanticClient)(f).DeleteByParent(ctx, collection, kbID, parentID)
+}
+
+func (f *itemDeleteOnlySemanticClient) ListByKB(ctx context.Context, collection, kbID string) ([]chroma.ChunkRecord, error) {
+	return (*fakeSemanticClient)(f).ListByKB(ctx, collection, kbID)
 }
 
 func (f *itemDeleteOnlySemanticClient) Close() error {
