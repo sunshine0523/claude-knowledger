@@ -543,16 +543,21 @@ func normalizeCreateInput(input CreateKnowledgeBaseInput) (registry.RuntimeKnowl
 			return registry.RuntimeKnowledgeBase{}, err
 		}
 	}
-	if input.StoreType == "sqlite" && input.SemanticEnabled != nil {
+	if input.SemanticEnabled != nil && (input.StoreType == "sqlite" || input.StoreType == "text") {
+		if cfg.Indexing == nil {
+			cfg.Indexing = map[string]any{}
+		}
 		semantic, _ := cfg.Indexing["semantic"].(map[string]any)
 		if semantic == nil {
-			semantic = map[string]any{}
-			if cfg.Indexing == nil {
-				cfg.Indexing = map[string]any{}
-			}
+			semantic = map[string]any{"provider": "chroma"}
 			cfg.Indexing["semantic"] = semantic
 		}
 		semantic["enabled"] = *input.SemanticEnabled
+		if scope == core.ScopeGlobal && input.StoreType == "text" && *input.SemanticEnabled {
+			if err := config.ApplyKnowledgeBaseDefaults(&cfg); err != nil {
+				return registry.RuntimeKnowledgeBase{}, err
+			}
+		}
 	}
 	return registry.RuntimeKnowledgeBase{
 		ID:                cfg.ID,
@@ -710,6 +715,14 @@ func searchOptionsForKnowledgeBase(opt core.SearchOptions, kb core.KnowledgeBase
 	}
 	if requested == "" || requested == "auto" {
 		requested = "lexical"
+	}
+	if requested == "hybrid" && kb.StoreType == "text" {
+		if backend.SupportsSemantic(kb) {
+			effective.SearchMode = "semantic"
+			return effective, fmt.Sprintf("%s: hybrid not supported on text backend, falling back to semantic", kb.ID)
+		}
+		effective.SearchMode = "lexical"
+		return effective, fmt.Sprintf("%s: hybrid not supported on text backend, falling back to lexical", kb.ID)
 	}
 	if requested == "semantic" || requested == "hybrid" {
 		if !backend.SupportsSemantic(kb) {

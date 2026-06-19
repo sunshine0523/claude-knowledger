@@ -14,6 +14,110 @@ import (
 	"github.com/kindbrave/knowledger/internal/service"
 )
 
+type fakeSemanticTextBackend struct{}
+
+func (f *fakeSemanticTextBackend) Add(context.Context, core.KnowledgeBase, core.AddInput) (core.KnowledgeItem, core.IngestionResult, core.IndexStatus, error) {
+	return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, nil
+}
+func (f *fakeSemanticTextBackend) Search(_ context.Context, _ core.KnowledgeBase, opt core.SearchOptions) ([]core.SearchHit, error) {
+	return []core.SearchHit{{ItemID: "x", MatchMode: opt.SearchMode}}, nil
+}
+func (f *fakeSemanticTextBackend) GetItem(context.Context, core.KnowledgeBase, string) (core.KnowledgeItem, error) {
+	return core.KnowledgeItem{}, nil
+}
+func (f *fakeSemanticTextBackend) ListItems(context.Context, core.KnowledgeBase) ([]core.KnowledgeItem, error) {
+	return nil, nil
+}
+func (f *fakeSemanticTextBackend) DeleteItem(context.Context, core.KnowledgeBase, string) error {
+	return nil
+}
+func (f *fakeSemanticTextBackend) SupportsSemantic(core.KnowledgeBase) bool { return true }
+
+type fakeNoSemanticTextBackend struct{}
+
+func (f *fakeNoSemanticTextBackend) Add(context.Context, core.KnowledgeBase, core.AddInput) (core.KnowledgeItem, core.IngestionResult, core.IndexStatus, error) {
+	return core.KnowledgeItem{}, core.IngestionResult{}, core.IndexStatus{}, nil
+}
+func (f *fakeNoSemanticTextBackend) Search(_ context.Context, _ core.KnowledgeBase, opt core.SearchOptions) ([]core.SearchHit, error) {
+	return []core.SearchHit{{ItemID: "x", MatchMode: opt.SearchMode}}, nil
+}
+func (f *fakeNoSemanticTextBackend) GetItem(context.Context, core.KnowledgeBase, string) (core.KnowledgeItem, error) {
+	return core.KnowledgeItem{}, nil
+}
+func (f *fakeNoSemanticTextBackend) ListItems(context.Context, core.KnowledgeBase) ([]core.KnowledgeItem, error) {
+	return nil, nil
+}
+func (f *fakeNoSemanticTextBackend) DeleteItem(context.Context, core.KnowledgeBase, string) error {
+	return nil
+}
+func (f *fakeNoSemanticTextBackend) SupportsSemantic(core.KnowledgeBase) bool { return false }
+
+func TestSearchTextHybridDowngradesToSemantic(t *testing.T) {
+	kb := core.KnowledgeBase{
+		ID: "docs", Scope: core.ScopeGlobal, StoreType: "text",
+		StoreConfig: map[string]any{"path": "/tmp/docs"}, Enabled: true,
+	}
+	svc := service.New([]core.KnowledgeBase{kb}, map[string]core.StoreBackend{"text": &fakeSemanticTextBackend{}})
+
+	res, err := svc.Search(context.Background(), core.SearchOptions{Query: "hi", SearchMode: "hybrid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "hybrid not supported on text backend") && strings.Contains(w, "falling back to semantic") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected hybrid->semantic warning, got %#v", res.Warnings)
+	}
+}
+
+func TestSearchTextHybridDowngradesToLexicalWhenSemanticDisabled(t *testing.T) {
+	kb := core.KnowledgeBase{
+		ID: "docs", Scope: core.ScopeGlobal, StoreType: "text",
+		StoreConfig: map[string]any{"path": "/tmp/docs"}, Enabled: true,
+	}
+	svc := service.New([]core.KnowledgeBase{kb}, map[string]core.StoreBackend{"text": &fakeNoSemanticTextBackend{}})
+
+	res, err := svc.Search(context.Background(), core.SearchOptions{Query: "hi", SearchMode: "hybrid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "falling back to lexical") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected hybrid->lexical warning, got %#v", res.Warnings)
+	}
+}
+
+func TestNormalizeCreateInputAcceptsTextWithSemantic(t *testing.T) {
+	enabled := true
+	dir := t.TempDir()
+	rt, err := service.NormalizeCreateInputForTest(service.CreateKnowledgeBaseInput{
+		Scope: core.ScopeGlobal, ID: "docs", StoreType: "text", Path: dir,
+		SemanticEnabled: &enabled,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	semantic, _ := rt.Indexing["semantic"].(map[string]any)
+	if semantic == nil {
+		t.Fatal("expected semantic block in indexing")
+	}
+	if e, _ := semantic["enabled"].(bool); !e {
+		t.Fatalf("expected enabled=true, got %#v", semantic)
+	}
+	if semantic["provider"] != "chroma" {
+		t.Fatalf("expected provider chroma, got %#v", semantic["provider"])
+	}
+}
+
 type fakeBackend struct {
 	hits []core.SearchHit
 }
