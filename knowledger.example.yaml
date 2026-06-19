@@ -28,3 +28,14 @@ knowledge_bases:
     enabled: false
     store_config:
       path: ./data/docs
+    # Semantic search is opt-in for text KBs. After enabling, run
+    #   knowledger index --kb docs --rebuild
+    # to backfill chroma with whatever already lives under store_config.path.
+    indexing:
+      semantic:
+        enabled: false
+        provider: chroma
+        mode: persistent
+        path: ~/.knowledger/chroma/docs
+        collection: docs
+        auto_download: true

@@ -8,8 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kindbrave/knowledger/internal/backends/text"
 	"github.com/kindbrave/knowledger/internal/config"
 	"github.com/kindbrave/knowledger/internal/core"
+	"github.com/kindbrave/knowledger/internal/indexing/chroma"
+	"github.com/kindbrave/knowledger/internal/indexing/semantic"
 	"github.com/kindbrave/knowledger/internal/registry"
 	"github.com/kindbrave/knowledger/internal/service"
 )
@@ -115,6 +118,67 @@ func TestNormalizeCreateInputAcceptsTextWithSemantic(t *testing.T) {
 	}
 	if semantic["provider"] != "chroma" {
 		t.Fatalf("expected provider chroma, got %#v", semantic["provider"])
+	}
+}
+
+type recordingChromaClient struct {
+	upserts   []chroma.Item
+	queryHits map[string][]chroma.Hit
+}
+
+func (r *recordingChromaClient) Upsert(_ context.Context, _ string, item chroma.Item) error {
+	r.upserts = append(r.upserts, item)
+	return nil
+}
+func (r *recordingChromaClient) Query(_ context.Context, _ string, q string, _ int) ([]chroma.Hit, error) {
+	return r.queryHits[q], nil
+}
+func (r *recordingChromaClient) Delete(_ context.Context, _ string, _ string) error { return nil }
+func (r *recordingChromaClient) DeleteByParent(_ context.Context, _ string, _ string, _ string) error {
+	return nil
+}
+func (r *recordingChromaClient) ListByKB(_ context.Context, _ string, _ string) ([]chroma.ChunkRecord, error) {
+	return nil, nil
+}
+func (r *recordingChromaClient) Close() error { return nil }
+
+func TestServiceTextSemanticAddThenSearch(t *testing.T) {
+	dir := t.TempDir()
+	chromaDir := t.TempDir()
+	c := &recordingChromaClient{queryHits: map[string][]chroma.Hit{}}
+	idx := semantic.NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	textBackend := text.New(text.WithIndexer(idx))
+	kb := core.KnowledgeBase{
+		ID: "docs", Scope: core.ScopeGlobal, StoreType: "text",
+		StoreConfig: map[string]any{"path": dir}, Enabled: true,
+		Indexing: map[string]any{"semantic": map[string]any{
+			"enabled": true, "provider": "chroma", "mode": "persistent",
+			"path": chromaDir, "collection": "docs", "auto_download": true,
+		}},
+	}
+	svc := service.New([]core.KnowledgeBase{kb}, map[string]core.StoreBackend{"text": textBackend})
+
+	added, _, status, err := svc.Add(context.Background(), core.AddInput{Scope: core.ScopeGlobal, KBID: "docs", Title: "T", Content: "hello world"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.State != "indexed" {
+		t.Fatalf("expected indexed, got %#v", status)
+	}
+	if len(c.upserts) != 1 {
+		t.Fatalf("expected one upsert through the indexer, got %d", len(c.upserts))
+	}
+
+	c.queryHits["hello"] = []chroma.Hit{
+		{ItemID: added.ID + "#chunk-0", Content: "hello world", Score: 0.9, Metadata: map[string]any{"kb_id": "docs", "parent_id": added.ID, "title": "T"}},
+	}
+
+	res, err := svc.Search(context.Background(), core.SearchOptions{Query: "hello", SearchMode: "semantic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Hits) != 1 || res.Hits[0].SourceBackend != "text" {
+		t.Fatalf("expected one text hit, got %#v", res.Hits)
 	}
 }
 
