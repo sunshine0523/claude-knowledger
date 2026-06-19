@@ -275,3 +275,115 @@ func TestSearchUnsupportedKBReturnsNilNoCall(t *testing.T) {
 		t.Fatal("expected no client calls")
 	}
 }
+
+func TestMaintainIndexInsertsNewItem(t *testing.T) {
+	c := &fakeClient{}
+	idx := NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	kb := semanticKB("notes", "/tmp/c")
+	source := func(context.Context) ([]core.KnowledgeItem, error) {
+		return []core.KnowledgeItem{{ID: "1", KBID: "notes", Content: "hi"}}, nil
+	}
+	res, err := idx.MaintainIndex(context.Background(), kb, core.IndexOptions{}, source, func(core.KnowledgeItem) map[string]any { return map[string]any{"mtime": int64(99)} })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Indexed != 1 || res.Skipped != 0 || res.Deleted != 0 {
+		t.Fatalf("expected 1 indexed, got %#v", res)
+	}
+	if len(c.upserts) == 0 {
+		t.Fatal("expected upsert call")
+	}
+}
+
+func TestMaintainIndexSkipsUnchangedMtime(t *testing.T) {
+	c := &fakeClient{
+		listResp: []chroma.ChunkRecord{
+			{ID: "1#chunk-0", ParentID: "1", Mtime: 99},
+		},
+	}
+	idx := NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	kb := semanticKB("notes", "/tmp/c")
+	source := func(context.Context) ([]core.KnowledgeItem, error) {
+		return []core.KnowledgeItem{{ID: "1", KBID: "notes", Content: "hi"}}, nil
+	}
+	res, err := idx.MaintainIndex(context.Background(), kb, core.IndexOptions{}, source, func(core.KnowledgeItem) map[string]any { return map[string]any{"mtime": int64(99)} })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Indexed != 0 || res.Skipped != 1 {
+		t.Fatalf("expected skip, got %#v", res)
+	}
+	if len(c.upserts) != 0 {
+		t.Fatal("expected no upsert when mtime matches")
+	}
+}
+
+func TestMaintainIndexReindexesChangedMtime(t *testing.T) {
+	c := &fakeClient{
+		listResp: []chroma.ChunkRecord{
+			{ID: "1#chunk-0", ParentID: "1", Mtime: 50},
+		},
+	}
+	idx := NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	source := func(context.Context) ([]core.KnowledgeItem, error) {
+		return []core.KnowledgeItem{{ID: "1", KBID: "notes", Content: "hi"}}, nil
+	}
+	res, err := idx.MaintainIndex(context.Background(), semanticKB("notes", "/tmp/c"), core.IndexOptions{}, source, func(core.KnowledgeItem) map[string]any { return map[string]any{"mtime": int64(99)} })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Indexed != 1 || res.Skipped != 0 {
+		t.Fatalf("expected re-index, got %#v", res)
+	}
+}
+
+func TestMaintainIndexDeletesOrphans(t *testing.T) {
+	c := &fakeClient{
+		listResp: []chroma.ChunkRecord{
+			{ID: "9#chunk-0", ParentID: "9", Mtime: 1},
+		},
+	}
+	idx := NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	source := func(context.Context) ([]core.KnowledgeItem, error) { return nil, nil }
+	res, err := idx.MaintainIndex(context.Background(), semanticKB("notes", "/tmp/c"), core.IndexOptions{}, source, func(core.KnowledgeItem) map[string]any { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Deleted != 1 {
+		t.Fatalf("expected 1 deleted orphan, got %#v", res)
+	}
+	if len(c.deletesByPar) != 1 || c.deletesByPar[0].Parent != "9" {
+		t.Fatalf("unexpected delete calls: %#v", c.deletesByPar)
+	}
+}
+
+func TestMaintainIndexRebuildDeletesAndUpsertsAll(t *testing.T) {
+	c := &fakeClient{
+		listResp: []chroma.ChunkRecord{
+			{ID: "1#chunk-0", ParentID: "1", Mtime: 1},
+			{ID: "2#chunk-0", ParentID: "2", Mtime: 2},
+		},
+	}
+	idx := NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	source := func(context.Context) ([]core.KnowledgeItem, error) {
+		return []core.KnowledgeItem{{ID: "1", Content: "a"}, {ID: "2", Content: "b"}}, nil
+	}
+	res, err := idx.MaintainIndex(context.Background(), semanticKB("notes", "/tmp/c"), core.IndexOptions{Rebuild: true}, source, func(core.KnowledgeItem) map[string]any { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Indexed != 2 {
+		t.Fatalf("expected indexed=2, got %#v", res)
+	}
+}
+
+func TestMaintainIndexUnsupportedKBSkipsWithWarning(t *testing.T) {
+	idx := NewIndexer(nil, nil)
+	res, err := idx.MaintainIndex(context.Background(), core.KnowledgeBase{ID: "x"}, core.IndexOptions{}, func(context.Context) ([]core.KnowledgeItem, error) { return nil, nil }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Skipped != 1 || len(res.Warnings) != 1 {
+		t.Fatalf("expected skip+warning, got %#v", res)
+	}
+}
