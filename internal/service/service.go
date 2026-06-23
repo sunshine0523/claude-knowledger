@@ -27,9 +27,10 @@ type KnowledgeBaseSummary struct {
 }
 
 type IndexKnowledgeInput struct {
-	Scope   string
-	KBID    string
-	Rebuild bool
+	Scope    string
+	KBID     string
+	Rebuild  bool
+	Progress core.IndexProgress
 }
 
 type KnowledgeBaseIndexResult struct {
@@ -177,7 +178,7 @@ func (s *Service) IndexKnowledge(ctx context.Context, input IndexKnowledgeInput)
 			result.Warnings = append(result.Warnings, indexResult.Warnings...)
 			continue
 		}
-		indexResult, err := maintainer.MaintainIndex(ctx, kb, core.IndexOptions{Rebuild: input.Rebuild})
+		indexResult, err := maintainer.MaintainIndex(ctx, kb, core.IndexOptions{Rebuild: input.Rebuild, Progress: input.Progress})
 		if err != nil {
 			return result, err
 		}
@@ -715,14 +716,6 @@ func searchOptionsForKnowledgeBase(opt core.SearchOptions, kb core.KnowledgeBase
 	}
 	if requested == "" || requested == "auto" {
 		requested = "lexical"
-	}
-	if requested == "hybrid" && kb.StoreType == "text" {
-		if backend.SupportsSemantic(kb) {
-			effective.SearchMode = "semantic"
-			return effective, fmt.Sprintf("%s: hybrid not supported on text backend, falling back to semantic", kb.ID)
-		}
-		effective.SearchMode = "lexical"
-		return effective, fmt.Sprintf("%s: hybrid not supported on text backend, falling back to lexical", kb.ID)
 	}
 	if requested == "semantic" || requested == "hybrid" {
 		if !backend.SupportsSemantic(kb) {

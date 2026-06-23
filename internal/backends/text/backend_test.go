@@ -148,6 +148,65 @@ func TestTextBackendSemanticSearchEnrichesAndSkipsOrphans(t *testing.T) {
 	}
 }
 
+func TestTextBackendHybridSearchMergesLexicalAndSemantic(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "nginx.md"), []byte("nginx 处理静态资源 and other things"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "other.md"), []byte("unrelated content body"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := &recordingClient{
+		queryHits: map[string][]chroma.Hit{
+			"处理静态资源": {
+				{ItemID: "other#chunk-0", Content: "unrelated", Score: 0.5, Metadata: map[string]any{"kb_id": "docs", "parent_id": "other", "title": "other.md"}},
+			},
+		},
+	}
+	idx := semantic.NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	b := text.New(text.WithIndexer(idx))
+	kb := newTextSemanticKB(dir, t.TempDir())
+
+	hits, err := b.Search(context.Background(), kb, core.SearchOptions{Query: "处理静态资源", SearchMode: "hybrid", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]core.SearchHit{}
+	for _, h := range hits {
+		ids[h.ItemID] = h
+	}
+	if _, ok := ids["nginx"]; !ok {
+		t.Fatalf("hybrid must keep lexical hit nginx, got %#v", hits)
+	}
+	if _, ok := ids["other"]; !ok {
+		t.Fatalf("hybrid must keep semantic hit other, got %#v", hits)
+	}
+	if len(hits) != 2 {
+		t.Fatalf("expected 2 deduped hits, got %d: %#v", len(hits), hits)
+	}
+	for _, h := range hits {
+		if h.MatchMode != "hybrid" {
+			t.Fatalf("hybrid hit must report MatchMode=hybrid, got %q on %s", h.MatchMode, h.ItemID)
+		}
+	}
+}
+
+func TestTextBackendHybridSearchFallsBackToLexicalWithoutSemantic(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.md"), []byte("hybrid hit needle"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := text.New()
+	kb := core.KnowledgeBase{ID: "docs", StoreType: "text", StoreConfig: map[string]any{"path": dir}, Enabled: true}
+	hits, err := b.Search(context.Background(), kb, core.SearchOptions{Query: "needle", SearchMode: "hybrid", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].ItemID != "a" {
+		t.Fatalf("expected hybrid without semantic to fall back to lexical, got %#v", hits)
+	}
+}
+
 func TestTextBackendSemanticSearchFallsBackToLexicalWhenSemanticDisabled(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "a.md"), []byte("hello world"), 0o644); err != nil {

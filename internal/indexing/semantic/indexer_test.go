@@ -3,6 +3,8 @@ package semantic
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/kindbrave/knowledger/internal/core"
@@ -111,6 +113,7 @@ type fakeClient struct {
 	listErr      error
 	queryErr     error
 	queryHits    map[string][]chroma.Hit
+	queries      []string
 	upserts      []fakeUpsertCall
 	deletesByID  []string
 	deletesByPar []fakeParentDelete
@@ -123,6 +126,7 @@ func (f *fakeClient) Upsert(_ context.Context, collection string, item chroma.It
 	return f.upsertErr
 }
 func (f *fakeClient) Query(_ context.Context, _ string, query string, _ int) ([]chroma.Hit, error) {
+	f.queries = append(f.queries, query)
 	return f.queryHits[query], f.queryErr
 }
 func (f *fakeClient) Delete(_ context.Context, _ string, itemID string) error {
@@ -206,7 +210,7 @@ func TestUpsertItemNoopWhenSemanticDisabled(t *testing.T) {
 func TestSearchAggregatesChunksByParent(t *testing.T) {
 	c := &fakeClient{
 		queryHits: map[string][]chroma.Hit{
-			"hello": {
+			"how does config work": {
 				{ItemID: "42#chunk-0", Content: "low", Score: 0.3, Metadata: map[string]any{"kb_id": "notes", "parent_id": "42", "title": "T"}},
 				{ItemID: "42#chunk-1", Content: "high", Score: 0.9, Metadata: map[string]any{"kb_id": "notes", "parent_id": "42", "title": "T"}},
 				{ItemID: "99#chunk-0", Content: "other", Score: 0.5, Metadata: map[string]any{"kb_id": "notes", "parent_id": "99", "title": "U"}},
@@ -214,7 +218,7 @@ func TestSearchAggregatesChunksByParent(t *testing.T) {
 		},
 	}
 	idx := NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
-	hits, err := idx.Search(context.Background(), semanticKB("notes", "/tmp/c"), "hello", 10, "semantic")
+	hits, err := idx.Search(context.Background(), semanticKB("notes", "/tmp/c"), "how does config work", 10, "semantic")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,17 +236,35 @@ func TestSearchAggregatesChunksByParent(t *testing.T) {
 	}
 }
 
+// TestSearchPassesFullQueryNotTokens ensures the query is sent to chroma as
+// one embedding lookup, not split into per-token lookups. Embedding the joint
+// phrase is what makes semantic search work; tokenizing first reduces it to
+// noisy word-level matching.
+func TestSearchPassesFullQueryNotTokens(t *testing.T) {
+	c := &fakeClient{queryHits: map[string][]chroma.Hit{}}
+	idx := NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	if _, err := idx.Search(context.Background(), semanticKB("notes", "/tmp/c"), "how to configure semantic index", 10, "semantic"); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.queries) != 1 {
+		t.Fatalf("expected 1 chroma query, got %d: %#v", len(c.queries), c.queries)
+	}
+	if c.queries[0] != "how to configure semantic index" {
+		t.Fatalf("expected full query passed verbatim, got %q", c.queries[0])
+	}
+}
+
 func TestSearchFiltersByKBID(t *testing.T) {
 	c := &fakeClient{
 		queryHits: map[string][]chroma.Hit{
-			"hello": {
+			"hello world": {
 				{ItemID: "1#chunk-0", Score: 0.9, Metadata: map[string]any{"kb_id": "other", "parent_id": "1"}},
 				{ItemID: "2#chunk-0", Score: 0.5, Metadata: map[string]any{"kb_id": "notes", "parent_id": "2"}},
 			},
 		},
 	}
 	idx := NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
-	hits, err := idx.Search(context.Background(), semanticKB("notes", "/tmp/c"), "hello", 10, "semantic")
+	hits, err := idx.Search(context.Background(), semanticKB("notes", "/tmp/c"), "hello world", 10, "semantic")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +273,7 @@ func TestSearchFiltersByKBID(t *testing.T) {
 	}
 }
 
-func TestSearchEmptyTokensReturnsNil(t *testing.T) {
+func TestSearchEmptyQueryReturnsNil(t *testing.T) {
 	c := &fakeClient{}
 	idx := NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
 	hits, err := idx.Search(context.Background(), semanticKB("notes", "/tmp/c"), "   ", 10, "semantic")
@@ -260,6 +282,9 @@ func TestSearchEmptyTokensReturnsNil(t *testing.T) {
 	}
 	if hits != nil {
 		t.Fatalf("expected nil hits, got %#v", hits)
+	}
+	if len(c.queries) != 0 {
+		t.Fatalf("expected no chroma calls for empty query, got %#v", c.queries)
 	}
 }
 
@@ -385,5 +410,131 @@ func TestMaintainIndexUnsupportedKBSkipsWithWarning(t *testing.T) {
 	}
 	if res.Skipped != 1 || len(res.Warnings) != 1 {
 		t.Fatalf("expected skip+warning, got %#v", res)
+	}
+}
+
+// TestMaintainIndexOrphanWithEmptyParentDeletedByChunkID covers chunks left
+// over from before parent_id metadata existed. DeleteByParent rejects empty
+// parent ids; the maintainer must address those rows by chunk id instead so
+// the index doesn't keep accumulating unreachable rows.
+func TestMaintainIndexOrphanWithEmptyParentDeletedByChunkID(t *testing.T) {
+	c := &fakeClient{
+		listResp: []chroma.ChunkRecord{
+			{ID: "legacy-chunk-a", ParentID: ""},
+			{ID: "legacy-chunk-b", ParentID: ""},
+		},
+	}
+	idx := NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	source := func(context.Context) ([]core.KnowledgeItem, error) { return nil, nil }
+	res, err := idx.MaintainIndex(context.Background(), semanticKB("notes", "/tmp/c"), core.IndexOptions{}, source, func(core.KnowledgeItem) map[string]any { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Deleted != 2 {
+		t.Fatalf("expected 2 orphan chunks deleted, got %#v", res)
+	}
+	if len(c.deletesByPar) != 0 {
+		t.Fatalf("expected no DeleteByParent calls for empty parent, got %#v", c.deletesByPar)
+	}
+	if len(c.deletesByID) != 2 {
+		t.Fatalf("expected 2 chunk-id deletes, got %#v", c.deletesByID)
+	}
+}
+
+// TestMaintainIndexRebuildClearsPersistentPath verifies the recovery path for
+// a corrupted on-disk HNSW: --rebuild must remove the persistent data dir
+// before opening the chroma client, otherwise the C++ integrity check at first
+// collection access aborts the process and there is no way back from Go.
+func TestMaintainIndexRebuildClearsPersistentPath(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "data_level0.bin"), []byte("corrupt"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := &fakeClient{}
+	idx := NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	source := func(context.Context) ([]core.KnowledgeItem, error) { return nil, nil }
+	_, err := idx.MaintainIndex(context.Background(), semanticKB("notes", dir), core.IndexOptions{Rebuild: true}, source, func(core.KnowledgeItem) map[string]any { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("expected persistent dir removed, stat err = %v", err)
+	}
+}
+
+// TestMaintainIndexRebuildEvictsCachedClient ensures a cached client pinned
+// to the corrupted dir is closed and replaced before the dir is removed.
+// Without eviction the cached client would keep file handles to a deleted
+// path and the rebuild would silently use the dead client.
+func TestMaintainIndexRebuildEvictsCachedClient(t *testing.T) {
+	dir := t.TempDir()
+	first := &fakeClient{}
+	second := &fakeClient{}
+	calls := 0
+	factory := func(chroma.Config) (chroma.Client, error) {
+		calls++
+		if calls == 1 {
+			return first, nil
+		}
+		return second, nil
+	}
+	idx := NewIndexer(factory, nil)
+	cfg, _ := idx.configFor(semanticKB("notes", dir))
+	if _, err := idx.client(cfg); err != nil {
+		t.Fatal(err)
+	}
+	source := func(context.Context) ([]core.KnowledgeItem, error) { return nil, nil }
+	if _, err := idx.MaintainIndex(context.Background(), semanticKB("notes", dir), core.IndexOptions{Rebuild: true}, source, func(core.KnowledgeItem) map[string]any { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if !first.closed {
+		t.Fatal("expected first client closed during rebuild reset")
+	}
+	if calls != 2 {
+		t.Fatalf("expected factory invoked twice (cached+post-reset), got %d", calls)
+	}
+}
+
+// TestMaintainIndexProgressEventsIncremental locks down the order and shape
+// of progress events the CLI relies on for its stderr output.
+func TestMaintainIndexProgressEventsIncremental(t *testing.T) {
+	c := &fakeClient{
+		listResp: []chroma.ChunkRecord{
+			{ID: "1#chunk-0", ParentID: "1", Mtime: 99},
+			{ID: "ghost#chunk-0", ParentID: "ghost", Mtime: 1},
+		},
+	}
+	idx := NewIndexer(func(chroma.Config) (chroma.Client, error) { return c, nil }, nil)
+	source := func(context.Context) ([]core.KnowledgeItem, error) {
+		return []core.KnowledgeItem{
+			{ID: "1", Content: "hi"},
+			{ID: "2", Content: "new"},
+		}, nil
+	}
+	var events []core.IndexProgressEvent
+	progress := core.IndexProgress(func(ev core.IndexProgressEvent) { events = append(events, ev) })
+	if _, err := idx.MaintainIndex(context.Background(), semanticKB("notes", "/tmp/c"), core.IndexOptions{Progress: progress}, source, func(core.KnowledgeItem) map[string]any { return map[string]any{"mtime": int64(99)} }); err != nil {
+		t.Fatal(err)
+	}
+	want := []struct {
+		phase core.IndexProgressPhase
+		item  string
+	}{
+		{core.IndexProgressPhaseStart, ""},
+		{core.IndexProgressPhaseSkip, "1"},
+		{core.IndexProgressPhaseIndex, "2"},
+		{core.IndexProgressPhaseDeleteOrphan, "ghost"},
+		{core.IndexProgressPhaseDone, ""},
+	}
+	if len(events) != len(want) {
+		t.Fatalf("expected %d events, got %d: %#v", len(want), len(events), events)
+	}
+	for i, w := range want {
+		if events[i].Phase != w.phase || events[i].Item != w.item || events[i].KBID != "notes" {
+			t.Fatalf("event %d = %#v, want phase=%s item=%q", i, events[i], w.phase, w.item)
+		}
+	}
+	if events[0].Total != 2 || events[len(events)-1].Total != 2 {
+		t.Fatalf("expected total=2 on start/done, got start=%d done=%d", events[0].Total, events[len(events)-1].Total)
 	}
 }

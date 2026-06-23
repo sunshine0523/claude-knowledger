@@ -1,6 +1,9 @@
 package chunking
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 const (
 	targetChunkSize = 800
@@ -76,7 +79,7 @@ func mergeWithOverlap(parts []string, sep string) []string {
 			out = append(out, current)
 			tail := current
 			if len(tail) > chunkOverlap {
-				tail = tail[len(tail)-chunkOverlap:]
+				tail = tail[adjustToRuneStart(tail, len(tail)-chunkOverlap):]
 			}
 			current = tail
 			if current != "" {
@@ -103,14 +106,28 @@ func charChunks(text string) []string {
 	}
 	var out []string
 	for i := 0; i < len(text); i += step {
-		end := i + targetChunkSize
-		if end > len(text) {
-			end = len(text)
-		}
-		out = append(out, text[i:end])
+		start := adjustToRuneStart(text, i)
+		end := adjustToRuneStart(text, start+targetChunkSize)
+		out = append(out, text[start:end])
 		if end == len(text) {
 			break
 		}
 	}
 	return out
+}
+
+// adjustToRuneStart returns the smallest index >= i where a UTF-8 rune begins
+// in s, clamped to [0, len(s)]. Use it to snap byte offsets to rune boundaries
+// so string slices never split a multi-byte rune.
+func adjustToRuneStart(s string, i int) int {
+	if i <= 0 {
+		return 0
+	}
+	if i >= len(s) {
+		return len(s)
+	}
+	for i < len(s) && !utf8.RuneStart(s[i]) {
+		i++
+	}
+	return i
 }

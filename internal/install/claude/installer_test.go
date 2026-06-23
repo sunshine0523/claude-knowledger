@@ -171,6 +171,7 @@ func TestInstallFreshInstallMaterializesMarketplaceDirectoriesWith0755Permission
 		filepath.Join(marketplacePath, ".claude-plugin"),
 		filepath.Join(marketplacePath, "skills"),
 		filepath.Join(marketplacePath, "skills", "knowledger"),
+		filepath.Join(marketplacePath, "hooks"),
 	} {
 		assertDirMode(t, dir, 0o755)
 	}
@@ -181,6 +182,8 @@ func TestInstallFreshInstallMaterializesMarketplaceDirectoriesWith0755Permission
 		filepath.Join(marketplacePath, ".mcp.json"),
 		filepath.Join(marketplacePath, "README.md"),
 		filepath.Join(marketplacePath, "skills", "knowledger", "SKILL.md"),
+		filepath.Join(marketplacePath, "hooks", "hooks.json"),
+		filepath.Join(marketplacePath, "hooks", "precheck.json"),
 	} {
 		assertFileMode(t, file, 0o644)
 	}

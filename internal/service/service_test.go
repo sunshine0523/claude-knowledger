@@ -55,7 +55,7 @@ func (f *fakeNoSemanticTextBackend) DeleteItem(context.Context, core.KnowledgeBa
 }
 func (f *fakeNoSemanticTextBackend) SupportsSemantic(core.KnowledgeBase) bool { return false }
 
-func TestSearchTextHybridDowngradesToSemantic(t *testing.T) {
+func TestSearchTextHybridPassesThroughWhenSemanticEnabled(t *testing.T) {
 	kb := core.KnowledgeBase{
 		ID: "docs", Scope: core.ScopeGlobal, StoreType: "text",
 		StoreConfig: map[string]any{"path": "/tmp/docs"}, Enabled: true,
@@ -66,14 +66,13 @@ func TestSearchTextHybridDowngradesToSemantic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	found := false
 	for _, w := range res.Warnings {
-		if strings.Contains(w, "hybrid not supported on text backend") && strings.Contains(w, "falling back to semantic") {
-			found = true
+		if strings.Contains(w, "hybrid") && strings.Contains(w, "not supported") {
+			t.Fatalf("hybrid should reach the text backend without downgrade warning, got %#v", res.Warnings)
 		}
 	}
-	if !found {
-		t.Fatalf("expected hybrid->semantic warning, got %#v", res.Warnings)
+	if len(res.Hits) != 1 || res.Hits[0].MatchMode != "hybrid" {
+		t.Fatalf("expected hit forwarded with MatchMode=hybrid, got %#v", res.Hits)
 	}
 }
 
@@ -90,7 +89,7 @@ func TestSearchTextHybridDowngradesToLexicalWhenSemanticDisabled(t *testing.T) {
 	}
 	found := false
 	for _, w := range res.Warnings {
-		if strings.Contains(w, "falling back to lexical") {
+		if strings.Contains(w, "hybrid") && strings.Contains(w, "lexical results returned") {
 			found = true
 		}
 	}

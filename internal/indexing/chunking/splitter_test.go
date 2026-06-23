@@ -3,6 +3,7 @@ package chunking
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestSplitEmpty(t *testing.T) {
@@ -100,4 +101,38 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func TestSplitProducesValidUTF8ForCJK(t *testing.T) {
+	// Pure CJK with no separators forces the char-level fallback. Each
+	// character is 3 bytes; a byte-aligned 800/700 window will land
+	// mid-rune and emit invalid UTF-8 unless boundaries are rune-aware.
+	text := strings.Repeat("中", 4000)
+	got := Default().Split(text)
+	if len(got) < 2 {
+		t.Fatalf("expected multi-chunk split for long CJK text, got %d", len(got))
+	}
+	for i, c := range got {
+		if !utf8.ValidString(c.Text) {
+			t.Fatalf("chunk %d contains invalid UTF-8 (len=%d, first 4 bytes=%x)", i, len(c.Text), []byte(c.Text)[:minInt(4, len(c.Text))])
+		}
+	}
+}
+
+func TestSplitOverlapTailIsRuneSafe(t *testing.T) {
+	// A long CJK paragraph separated by ASCII newlines forces
+	// mergeWithOverlap to take a tail slice. The byte-based tail offset
+	// would land mid-rune at the 100-byte boundary; we expect the rune
+	// snap to keep every chunk a valid UTF-8 string.
+	para := strings.Repeat("中文测试", 100)
+	text := para + "\n\n" + para + "\n\n" + para
+	got := Default().Split(text)
+	if len(got) < 2 {
+		t.Fatalf("expected >=2 chunks, got %d", len(got))
+	}
+	for i, c := range got {
+		if !utf8.ValidString(c.Text) {
+			t.Fatalf("chunk %d invalid UTF-8 at overlap boundary", i)
+		}
+	}
 }

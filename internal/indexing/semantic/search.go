@@ -3,42 +3,39 @@ package semantic
 import (
 	"context"
 	"sort"
+	"strings"
 
 	"github.com/kindbrave/knowledger/internal/core"
 	"github.com/kindbrave/knowledger/internal/indexing/chroma"
 )
 
+// Search runs a single embedding query against chroma using the full query
+// string. Splitting the query into lexical tokens and querying each one
+// separately destroys the joint semantics the embedding model is supposed to
+// capture, so the whole query is passed through verbatim.
 func (idx *Indexer) Search(ctx context.Context, kb core.KnowledgeBase, query string, limit int, mode string) ([]core.SearchHit, error) {
 	cfg, ok := idx.configFor(kb)
 	if !ok {
 		return nil, nil
 	}
-	tokens := core.TokenizeQuery(query)
-	if len(tokens) == 0 {
+	query = strings.TrimSpace(query)
+	if query == "" {
 		return nil, nil
 	}
 	client, err := idx.client(cfg)
 	if err != nil {
 		return nil, err
 	}
-	merged := map[string]chroma.Hit{}
-	for _, tok := range tokens {
-		raw, err := client.Query(ctx, cfg.Collection, tok, limit)
-		if err != nil {
-			return nil, err
-		}
-		for _, h := range raw {
-			kbID, _ := h.Metadata["kb_id"].(string)
-			if kbID != kb.ID {
-				continue
-			}
-			if prev, exists := merged[h.ItemID]; !exists || h.Score > prev.Score {
-				merged[h.ItemID] = h
-			}
-		}
+	raw, err := client.Query(ctx, cfg.Collection, query, limit)
+	if err != nil {
+		return nil, err
 	}
 	byParent := map[string]chroma.Hit{}
-	for _, h := range merged {
+	for _, h := range raw {
+		kbID, _ := h.Metadata["kb_id"].(string)
+		if kbID != kb.ID {
+			continue
+		}
 		parent, _ := h.Metadata["parent_id"].(string)
 		if parent == "" {
 			continue

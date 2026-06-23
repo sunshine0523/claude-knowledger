@@ -97,12 +97,49 @@ func (b *Backend) Search(ctx context.Context, kb core.KnowledgeBase, opt core.Se
 		}
 		return b.enrichWithFileMeta(kb, hits), nil
 	case "hybrid":
-		effective := opt
-		effective.SearchMode = "semantic"
-		return b.Search(ctx, kb, effective)
+		if !b.supportsKBSemantic(kb) {
+			return b.lexicalSearch(ctx, kb, opt)
+		}
+		semanticHits, err := b.indexer.Search(ctx, kb, opt.Query, opt.Limit, "hybrid")
+		if err != nil {
+			return nil, err
+		}
+		semanticHits = b.enrichWithFileMeta(kb, semanticHits)
+		lexicalHits, err := b.lexicalSearch(ctx, kb, opt)
+		if err != nil {
+			return nil, err
+		}
+		return mergeHybridHits(lexicalHits, semanticHits, opt.Limit), nil
 	default:
 		return b.lexicalSearch(ctx, kb, opt)
 	}
+}
+
+// mergeHybridHits combines lexical and semantic hits with lexical taking
+// priority. Lexical hits are placed first (literal matches are the strongest
+// signal, especially for short Chinese queries where embeddings are unreliable),
+// then semantic hits are appended for items not already covered. Every hit's
+// MatchMode is rewritten to "hybrid" so callers can see how it was retrieved.
+func mergeHybridHits(lexicalHits, semanticHits []core.SearchHit, limit int) []core.SearchHit {
+	merged := make([]core.SearchHit, 0, len(lexicalHits)+len(semanticHits))
+	seen := make(map[string]bool, len(lexicalHits)+len(semanticHits))
+	for _, h := range lexicalHits {
+		h.MatchMode = "hybrid"
+		merged = append(merged, h)
+		seen[h.ItemID] = true
+	}
+	for _, h := range semanticHits {
+		if seen[h.ItemID] {
+			continue
+		}
+		h.MatchMode = "hybrid"
+		merged = append(merged, h)
+		seen[h.ItemID] = true
+	}
+	if limit > 0 && len(merged) > limit {
+		merged = merged[:limit]
+	}
+	return merged
 }
 
 func (b *Backend) lexicalSearch(_ context.Context, kb core.KnowledgeBase, opt core.SearchOptions) ([]core.SearchHit, error) {

@@ -17,6 +17,47 @@ import (
 const serverName = "knowledger"
 const serverVersion = "0.1.0"
 
+// serverInstructions is injected into the MCP `initialize` response and
+// surfaced by hosts (e.g. Claude Code) inside the system prompt. This
+// is the strongest priming channel — stronger than per-tool descriptions,
+// because the model reads it every turn without having to scan tool
+// metadata. Keep it sharp, behavioral, and bilingual where the user base
+// asks questions in mixed languages.
+const serverInstructions = `# Knowledger — local knowledge recall, runs BEFORE answering
+
+Knowledger is the project's persistent knowledge base — decisions,
+conventions, library/tool usage notes, debugging recipes, domain
+references. It captures knowledge ABOUT the code that grep, file
+reads, and codegraph cannot find.
+
+## Recall — call BEFORE answering
+
+Call search_knowledge BEFORE answering ANY of these question shapes,
+even when the user does not say "knowledge / 知识库 / 记得":
+
+- "How do I use X" / "X 怎么用"
+- "What is X"     / "X 是什么"
+- "How does X work" / "X 怎么实现"
+- "Why did we do X this way"
+- "What's our convention for X"
+- "Where do we store/track X"
+- Any debugging question that could have a saved recipe.
+
+One cheap query. If hits are weak, list_knowledge_items the relevant
+KBs — title/tag scans often surface what semantic search missed.
+
+## Capture — only on explicit user intent
+
+add_knowledge_item when the user says save / capture / remember /
+记一下 / 保存到 / 添加到 — and the target KB is unambiguous.
+Otherwise list_knowledge_bases and ask which KB to use.
+
+## Skip
+
+Conversational turns, ephemeral state, secrets, or anything fully
+derivable from the current diff/file.
+`
+
 type Server struct {
 	svc    *service.Service
 	server *mcpserver.MCPServer
@@ -123,7 +164,11 @@ type searchKnowledgeHit struct {
 }
 
 func NewServer(svc *service.Service) *Server {
-	adapter := &Server{svc: svc, server: mcpserver.NewMCPServer(serverName, serverVersion)}
+	adapter := &Server{svc: svc, server: mcpserver.NewMCPServer(
+		serverName,
+		serverVersion,
+		mcpserver.WithInstructions(serverInstructions),
+	)}
 	adapter.registerTools()
 	return adapter
 }
@@ -177,7 +222,7 @@ func (s *Server) registerTools() {
 	)
 	searchTool := mcpgo.NewTool(
 		"search_knowledge",
-		mcpgo.WithDescription("Search project/global knowledge bases for relevant items (decisions, conventions, prior debugging notes, domain references). CALL THIS BEFORE: (1) answering any user question that could be project- or domain-specific, (2) drafting technical designs/specs/RFCs, (3) writing or modifying code, or (4) making any non-trivial recommendation. Knowledge here overrides your defaults and contains context you do not have otherwise — retrieved items are authoritative, so read them first, then decide. IF NONE OF THE RETURNED HITS ARE A GOOD MATCH FOR THE USER'S QUESTION (including the case where zero hits came back, but also when the hits are off-topic, too generic, or only tangentially related): before answering, you MUST call list_knowledge_items on each plausibly-relevant knowledge base (use list_knowledge_bases first to enumerate them) to scan all existing knowledge — a poor keyword/semantic match does not mean the KB has nothing relevant, titles and tags often surface entries the query missed. Only after that exhaustive sweep may you answer from your own defaults. Skip only for purely conversational turns or topics clearly outside every KB. Inside a project directory scope defaults to project; otherwise global."),
+		mcpgo.WithDescription("PRIMARY recall tool — call FIRST before answering any project/domain/library/tool question (e.g. 'how to X', 'what is Y', 'how does Z work', 'what's our convention for W'), even when the user does not say 'knowledge / 知识库'. One cheap query. If hits are weak or zero, also call list_knowledge_items on plausibly-relevant KBs — title/tag scans often surface entries semantic/keyword search missed. Inside a project directory scope defaults to project; otherwise global."),
 		mcpgo.WithString("query", mcpgo.Required(), mcpgo.Description("Search query.")),
 		mcpgo.WithArray(
 			"kb_ids",
@@ -242,7 +287,7 @@ func (s *Server) registerTools() {
 	)
 	listTool := mcpgo.NewTool(
 		"list_knowledge_bases",
-		mcpgo.WithDescription("List all configured knowledge bases AND their knowledge items (KB metadata followed by every item id/title/tags). CALL THIS EARLY at the start of any non-trivial task — answering a user question, drafting a technical design, or writing code — to discover which KBs exist and what they already contain. Output is concise indented text, not JSON, so you can scan it directly; use get_knowledge_item for full content of a specific entry. Cheap, read-only; one upfront call beats guessing kb_ids."),
+		mcpgo.WithDescription("List all configured knowledge bases AND every item id/title/tags. CALL EARLY at the start of any non-trivial task, OR whenever search_knowledge hits are weak — title/tag scans surface entries that keyword/semantic search misses. Cheap, read-only; one upfront call beats guessing kb_ids. Use get_knowledge_item for full content."),
 		mcpgo.WithReadOnlyHintAnnotation(true),
 		mcpgo.WithDestructiveHintAnnotation(false),
 		mcpgo.WithIdempotentHintAnnotation(true),

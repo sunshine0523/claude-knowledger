@@ -835,17 +835,19 @@ func TestSQLiteBackendLikeFallbackTokenizedOR(t *testing.T) {
 	}
 }
 
-func TestSQLiteBackendSemanticSearchTokenizesAndOrs(t *testing.T) {
+// TestSQLiteBackendSemanticSearchPassesFullQuery locks in that semantic mode
+// sends the entire query string to chroma in a single embedding lookup. An
+// earlier implementation tokenized the query and queried each token
+// separately, which destroyed the joint semantics the embedding model is
+// meant to capture and produced effectively-noise results.
+func TestSQLiteBackendSemanticSearchPassesFullQuery(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "knowledge.db")
 	client := &fakeSemanticClient{
 		queryHitsByQuery: map[string][]chroma.Hit{
-			"alpha": {
-				{ItemID: "1#chunk-0", Score: 0.5, Metadata: map[string]any{"kb_id": "notes", "parent_id": "1", "title": "first"}},
-				{ItemID: "2#chunk-0", Score: 0.7, Metadata: map[string]any{"kb_id": "notes", "parent_id": "2", "title": "second"}},
-			},
-			"beta": {
+			"alpha beta": {
 				{ItemID: "1#chunk-0", Score: 0.9, Metadata: map[string]any{"kb_id": "notes", "parent_id": "1", "title": "first"}},
+				{ItemID: "2#chunk-0", Score: 0.7, Metadata: map[string]any{"kb_id": "notes", "parent_id": "2", "title": "second"}},
 				{ItemID: "3#chunk-0", Score: 0.6, Metadata: map[string]any{"kb_id": "notes", "parent_id": "3", "title": "third"}},
 			},
 		},
@@ -863,26 +865,18 @@ func TestSQLiteBackendSemanticSearchTokenizesAndOrs(t *testing.T) {
 		t.Fatalf("Search returned error: %v", err)
 	}
 
-	if len(client.queries) != 2 {
-		t.Fatalf("expected 2 chroma queries (one per token), got %#v", client.queries)
+	if len(client.queries) != 1 {
+		t.Fatalf("expected exactly 1 chroma query (full phrase), got %#v", client.queries)
 	}
-	gotQueries := []string{client.queries[0].query, client.queries[1].query}
-	wantQueries := map[string]bool{"alpha": true, "beta": true}
-	for _, q := range gotQueries {
-		if !wantQueries[q] {
-			t.Fatalf("unexpected query token %q in %#v", q, gotQueries)
-		}
-		delete(wantQueries, q)
-	}
-	if len(wantQueries) != 0 {
-		t.Fatalf("missing expected query tokens: %#v (got %#v)", wantQueries, gotQueries)
+	if client.queries[0].query != "alpha beta" {
+		t.Fatalf("expected full-phrase query %q, got %q", "alpha beta", client.queries[0].query)
 	}
 
 	if len(hits) != 3 {
-		t.Fatalf("expected 3 deduped hits, got %d (%#v)", len(hits), hits)
+		t.Fatalf("expected 3 hits, got %d (%#v)", len(hits), hits)
 	}
 	if hits[0].ItemID != "1" || hits[0].Score != 0.9 {
-		t.Fatalf("expected itemID 1 with max score 0.9 first, got %#v", hits[0])
+		t.Fatalf("expected itemID 1 with score 0.9 first, got %#v", hits[0])
 	}
 	if hits[1].ItemID != "2" || hits[1].Score != 0.7 {
 		t.Fatalf("expected itemID 2 with score 0.7 second, got %#v", hits[1])

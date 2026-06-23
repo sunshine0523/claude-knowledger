@@ -3,6 +3,7 @@ package semantic
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/kindbrave/knowledger/internal/core"
 	"github.com/kindbrave/knowledger/internal/indexing/chroma"
@@ -16,6 +17,17 @@ func (idx *Indexer) MaintainIndex(ctx context.Context, kb core.KnowledgeBase, op
 	if !ok {
 		return core.IndexResult{Skipped: 1, Warnings: []string{fmt.Sprintf("%s: semantic indexing is not enabled", kb.ID)}}, nil
 	}
+	notify := progressNotifier(opts.Progress, kb.ID)
+
+	if opts.Rebuild {
+		if err := idx.resetPersistent(cfg); err != nil {
+			return core.IndexResult{}, &core.Error{Kind: core.ErrorKindIndex, Message: fmt.Sprintf("reset persistent chroma at %s", cfg.Path), Cause: err}
+		}
+		if cfg.EffectiveMode() == chroma.ModePersistent && cfg.Path != "" {
+			notify(core.IndexProgressEvent{Phase: core.IndexProgressPhaseRebuildReset, Message: cfg.Path})
+		}
+	}
+
 	client, err := idx.client(cfg)
 	if err != nil {
 		return core.IndexResult{}, &core.Error{Kind: core.ErrorKindIndex, Message: "semantic index client unavailable", Cause: err}
@@ -24,10 +36,16 @@ func (idx *Indexer) MaintainIndex(ctx context.Context, kb core.KnowledgeBase, op
 	if err != nil {
 		return core.IndexResult{}, err
 	}
+	notify(core.IndexProgressEvent{Phase: core.IndexProgressPhaseStart, Total: len(items)})
+
 	if opts.Rebuild {
-		return idx.maintainRebuild(ctx, client, cfg.Collection, kb, items, meta)
+		return idx.maintainRebuild(ctx, client, cfg.Collection, kb, items, meta, notify)
 	}
-	existing, err := client.ListByKB(ctx, cfg.Collection, kb.ID)
+	return idx.maintainIncremental(ctx, client, cfg.Collection, kb, items, meta, notify)
+}
+
+func (idx *Indexer) maintainIncremental(ctx context.Context, client chroma.Client, collection string, kb core.KnowledgeBase, items []core.KnowledgeItem, meta MetaProvider, notify func(core.IndexProgressEvent)) (core.IndexResult, error) {
+	existing, err := client.ListByKB(ctx, collection, kb.ID)
 	if err != nil {
 		return core.IndexResult{}, err
 	}
@@ -36,7 +54,8 @@ func (idx *Indexer) MaintainIndex(ctx context.Context, kb core.KnowledgeBase, op
 		byParent[rec.ParentID] = append(byParent[rec.ParentID], rec)
 	}
 	result := core.IndexResult{}
-	for _, item := range items {
+	total := len(items)
+	for i, item := range items {
 		var extra map[string]any
 		if meta != nil {
 			extra = meta(item)
@@ -46,50 +65,102 @@ func (idx *Indexer) MaintainIndex(ctx context.Context, kb core.KnowledgeBase, op
 		diskMtime, hasMtime := mtimeFromMeta(extra)
 		if present && hasMtime && allMtimesEqual(records, diskMtime) {
 			result.Skipped++
+			notify(core.IndexProgressEvent{Phase: core.IndexProgressPhaseSkip, Item: item.ID, Done: i + 1, Total: total})
 			continue
 		}
+		notify(core.IndexProgressEvent{Phase: core.IndexProgressPhaseIndex, Item: item.ID, Done: i + 1, Total: total})
 		if err := idx.UpsertItem(ctx, kb, item, extra); err != nil {
 			return result, err
 		}
 		result.Indexed++
 	}
-	for parentID := range byParent {
-		if err := client.DeleteByParent(ctx, cfg.Collection, kb.ID, parentID); err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("cleanup orphan parent %s: %v", parentID, err))
-			continue
-		}
-		result.Deleted++
-	}
+	deleteOrphans(ctx, client, collection, kb.ID, byParent, &result, notify)
+	notify(core.IndexProgressEvent{Phase: core.IndexProgressPhaseDone, Done: result.Indexed + result.Skipped, Total: total})
 	return result, nil
 }
 
-func (idx *Indexer) maintainRebuild(ctx context.Context, client chroma.Client, collection string, kb core.KnowledgeBase, items []core.KnowledgeItem, meta MetaProvider) (core.IndexResult, error) {
+func (idx *Indexer) maintainRebuild(ctx context.Context, client chroma.Client, collection string, kb core.KnowledgeBase, items []core.KnowledgeItem, meta MetaProvider, notify func(core.IndexProgressEvent)) (core.IndexResult, error) {
 	existing, err := client.ListByKB(ctx, collection, kb.ID)
 	if err != nil {
 		return core.IndexResult{}, err
 	}
-	seen := map[string]bool{}
+	byParent := map[string][]chroma.ChunkRecord{}
 	for _, rec := range existing {
-		if seen[rec.ParentID] {
-			continue
-		}
-		seen[rec.ParentID] = true
-		if err := client.DeleteByParent(ctx, collection, kb.ID, rec.ParentID); err != nil {
-			return core.IndexResult{}, err
-		}
+		byParent[rec.ParentID] = append(byParent[rec.ParentID], rec)
 	}
-	result := core.IndexResult{Deleted: len(seen)}
-	for _, item := range items {
+	result := core.IndexResult{}
+	deleteOrphans(ctx, client, collection, kb.ID, byParent, &result, notify)
+	total := len(items)
+	for i, item := range items {
 		var extra map[string]any
 		if meta != nil {
 			extra = meta(item)
 		}
+		notify(core.IndexProgressEvent{Phase: core.IndexProgressPhaseIndex, Item: item.ID, Done: i + 1, Total: total})
 		if err := idx.UpsertItem(ctx, kb, item, extra); err != nil {
 			return result, err
 		}
 		result.Indexed++
 	}
+	notify(core.IndexProgressEvent{Phase: core.IndexProgressPhaseDone, Done: result.Indexed + result.Skipped, Total: total})
 	return result, nil
+}
+
+// resetPersistent removes the persistent chroma data directory associated with
+// cfg, after closing and evicting any cached client. This is the only safe
+// recovery from a corrupted on-disk HNSW index, where chroma's C++ integrity
+// check aborts the process at first collection access.
+func (idx *Indexer) resetPersistent(cfg chroma.Config) error {
+	if cfg.EffectiveMode() != chroma.ModePersistent || cfg.Path == "" {
+		return nil
+	}
+	idx.mu.Lock()
+	key := clientKey(cfg)
+	if c := idx.clients[key]; c != nil {
+		_ = c.Close()
+		delete(idx.clients, key)
+	}
+	idx.mu.Unlock()
+	if err := os.RemoveAll(cfg.Path); err != nil {
+		return err
+	}
+	return nil
+}
+
+// deleteOrphans removes records whose parent items are no longer present.
+// Records keyed by an empty ParentID predate the parent_id metadata and must
+// be addressed by chunk id directly; DeleteByParent rejects an empty
+// parentID, so it cannot serve those rows.
+func deleteOrphans(ctx context.Context, client chroma.Client, collection, kbID string, byParent map[string][]chroma.ChunkRecord, result *core.IndexResult, notify func(core.IndexProgressEvent)) {
+	for parentID, records := range byParent {
+		if parentID == "" {
+			for _, rec := range records {
+				if err := client.Delete(ctx, collection, rec.ID); err != nil {
+					result.Errors = append(result.Errors, fmt.Sprintf("cleanup orphan chunk %s: %v", rec.ID, err))
+					continue
+				}
+				result.Deleted++
+				notify(core.IndexProgressEvent{Phase: core.IndexProgressPhaseDeleteOrphan, Item: rec.ID})
+			}
+			continue
+		}
+		if err := client.DeleteByParent(ctx, collection, kbID, parentID); err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("cleanup orphan parent %s: %v", parentID, err))
+			continue
+		}
+		result.Deleted++
+		notify(core.IndexProgressEvent{Phase: core.IndexProgressPhaseDeleteOrphan, Item: parentID})
+	}
+}
+
+func progressNotifier(p core.IndexProgress, kbID string) func(core.IndexProgressEvent) {
+	if p == nil {
+		return func(core.IndexProgressEvent) {}
+	}
+	return func(ev core.IndexProgressEvent) {
+		ev.KBID = kbID
+		p(ev)
+	}
 }
 
 func mtimeFromMeta(meta map[string]any) (int64, bool) {
