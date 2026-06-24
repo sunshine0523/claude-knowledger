@@ -29,7 +29,7 @@ var bundleFiles = []string{
 	"README.md",
 	"skills/knowledger/SKILL.md",
 	"hooks/hooks.json",
-	"hooks/precheck.json",
+	"hooks/precheck",
 }
 
 type CommandRunner interface {
@@ -272,10 +272,14 @@ func (i *Installer) materializeBundle() (string, error) {
 				}
 			}
 		}
-		if err := os.WriteFile(target, data, 0o644); err != nil {
+		perm := fs.FileMode(0o644)
+		if filepath.Ext(name) == "" {
+			perm = 0o755
+		}
+		if err := os.WriteFile(target, data, perm); err != nil {
 			return "", err
 		}
-		if err := os.Chmod(target, 0o644); err != nil {
+		if err := os.Chmod(target, perm); err != nil {
 			return "", err
 		}
 	}
