@@ -183,7 +183,7 @@ func TestInstallFreshInstallMaterializesMarketplaceDirectoriesWith0755Permission
 		filepath.Join(marketplacePath, "README.md"),
 		filepath.Join(marketplacePath, "skills", "knowledger", "SKILL.md"),
 		filepath.Join(marketplacePath, "hooks", "hooks.json"),
-		filepath.Join(marketplacePath, "hooks", "precheck.json"),
+		filepath.Join(marketplacePath, "hooks", "precheck"),
 	} {
 		assertFileMode(t, file, 0o644)
 	}
