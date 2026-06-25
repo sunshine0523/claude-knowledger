@@ -5,3 +5,9 @@ docs/
 /knowledger-go
 .codegraph/
 .omo/
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
