@@ -12,7 +12,6 @@ class RuntimeKnowledgeBase:
     store_type: str = ""
     store_config: dict[str, Any] = field(default_factory=dict)
     enabled: bool = True
-    default_search_mode: str = ""
     indexing: dict[str, Any] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
 

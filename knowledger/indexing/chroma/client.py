@@ -47,41 +47,6 @@ class ChromaClient:
             metadatas=[metadata]
         )
 
-    def query(
-        self, collection: "Collection", text: str, n_results: int
-    ) -> list[dict[str, Any]]:
-        """Query the collection and return results.
-
-        Returns list of {id, distance, metadata, document}.
-        """
-        if n_results <= 0:
-            n_results = 10
-
-        results = collection.query(
-            query_texts=[text],
-            n_results=n_results,
-            include=["metadatas", "documents", "distances"]
-        )
-
-        # Flatten chromadb nested structure
-        hits = []
-        if results and results.get("ids"):
-            ids = results["ids"][0] if results["ids"] else []
-            distances = results["distances"][0] if results.get("distances") else []
-            metadatas = results["metadatas"][0] if results.get("metadatas") else []
-            documents = results["documents"][0] if results.get("documents") else []
-
-            for i, doc_id in enumerate(ids):
-                hit = {
-                    "id": doc_id,
-                    "distance": distances[i] if i < len(distances) else 0.0,
-                    "metadata": metadatas[i] if i < len(metadatas) else {},
-                    "document": documents[i] if i < len(documents) else "",
-                }
-                hits.append(hit)
-
-        return hits
-
     def delete(self, collection: "Collection", item_id: str) -> None:
         """Delete a document from the collection."""
         collection.delete(ids=[item_id])

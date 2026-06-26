@@ -11,7 +11,6 @@ class KnowledgeBase:
     store_type: str = ""
     store_config: dict[str, Any] = field(default_factory=dict)
     enabled: bool = True
-    default_search_mode: str = ""
     indexing: dict[str, Any] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
 
@@ -29,22 +28,6 @@ class KnowledgeItem:
     tags: list[str] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
-
-
-@dataclass
-class SearchHit:
-    item_id: str
-    kb_id: str
-    scope: str = ""
-    item_type: str = ""
-    title: str = ""
-    snippet: str = ""
-    content_preview: str = ""
-    score: float = 0.0
-    match_mode: str = ""
-    source_backend: str = ""
-    locator: str = ""
-    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

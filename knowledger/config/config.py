@@ -6,7 +6,6 @@ import os
 import yaml
 
 
-DEFAULT_SEARCH_MODE = "auto"
 DEFAULT_SERVER_ADDRESS = ":34125"
 DEFAULT_STORAGE_PATH = "~/.knowledger/db"
 DEFAULT_RUNTIME_REGISTRY_PATH = "~/.knowledger/registry.json"
@@ -32,7 +31,6 @@ class KnowledgeBaseConfig:
     store_type: str = ""
     store_config: dict[str, Any] = field(default_factory=dict)
     enabled: bool = True
-    default_search_mode: str = ""
     indexing: dict[str, Any] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
 
@@ -40,7 +38,6 @@ class KnowledgeBaseConfig:
 @dataclass
 class Config:
     knowledge_bases: list[KnowledgeBaseConfig] = field(default_factory=list)
-    default_search_mode: str = DEFAULT_SEARCH_MODE
     server: ServerConfig = field(default_factory=ServerConfig)
     runtime_registry_path: str = ""
 
@@ -48,7 +45,6 @@ class Config:
 def load(path: str) -> Config:
     """Load configuration from YAML file and apply defaults."""
     cfg = Config(
-        default_search_mode=DEFAULT_SEARCH_MODE,
         server=ServerConfig(address=DEFAULT_SERVER_ADDRESS),
     )
 
@@ -57,8 +53,6 @@ def load(path: str) -> Config:
 
     if data:
         # Map YAML fields to Config fields
-        if "default_search_mode" in data:
-            cfg.default_search_mode = data["default_search_mode"]
         if "runtime_registry_path" in data:
             cfg.runtime_registry_path = data["runtime_registry_path"]
         if "server" in data:
@@ -77,7 +71,6 @@ def load(path: str) -> Config:
                             store_type=kb_data.get("store_type", ""),
                             store_config=kb_data.get("store_config", {}),
                             enabled=kb_data.get("enabled", True),
-                            default_search_mode=kb_data.get("default_search_mode", ""),
                             indexing=kb_data.get("indexing", {}),
                             tags=kb_data.get("tags", []),
                         )
@@ -96,9 +89,6 @@ def default() -> Config:
 
 def apply_defaults(cfg: Config) -> None:
     """Apply defaults to configuration in-place."""
-    if not cfg.default_search_mode:
-        cfg.default_search_mode = DEFAULT_SEARCH_MODE
-
     if not cfg.runtime_registry_path:
         cfg.runtime_registry_path = DEFAULT_RUNTIME_REGISTRY_PATH
 

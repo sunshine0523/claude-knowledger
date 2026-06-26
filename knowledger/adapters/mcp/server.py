@@ -4,7 +4,7 @@ import sys
 from typing import Any
 
 from knowledger.core import (
-    AddInput, IndexOptions, KnowledgeBase, SearchOptions, ScopedKBRef,
+    AddInput, IndexOptions, KnowledgeBase,
     normalize_scope, SCOPE_GLOBAL, SCOPE_PROJECT,
 )
 from knowledger.service import CreateKnowledgeBaseInput, IndexKnowledgeInput, Service
@@ -19,8 +19,9 @@ reads, and codegraph cannot find.
 
 ## Recall — call BEFORE answering
 
-Call search_knowledge BEFORE answering ANY of these question shapes,
-even when the user does not say "knowledge / 知识库 / 记得":
+Call list_knowledge_bases and list_knowledge_items BEFORE answering
+ANY of these question shapes, even when the user does not say
+"knowledge / 知识库 / 记得":
 
 - "How do I use X" / "X 怎么用"
 - "What is X"     / "X 是什么"
@@ -30,8 +31,8 @@ even when the user does not say "knowledge / 知识库 / 记得":
 - "Where do we store/track X"
 - Any debugging question that could have a saved recipe.
 
-One cheap query. If hits are weak, list_knowledge_items the relevant
-KBs — title/tag scans often surface what semantic search missed.
+Scan every KB's item titles/tags; for any item with relevant signal,
+call get_knowledge_item for the full content.
 
 ## Capture — only on explicit user intent
 
@@ -51,20 +52,6 @@ def _default_scope(raw: str, svc: Service) -> str:
     if not raw:
         return SCOPE_PROJECT if svc.has_project_scope() else SCOPE_GLOBAL
     return normalize_scope(raw)
-
-
-def _parse_kb_ids(kb_ids: list[str], default_scope: str) -> list[ScopedKBRef]:
-    out = []
-    for raw in kb_ids:
-        raw = raw.strip()
-        if not raw:
-            continue
-        if ":" in raw:
-            scope_part, id_part = raw.split(":", 1)
-            out.append(ScopedKBRef(scope=normalize_scope(scope_part), id=id_part.strip()))
-        else:
-            out.append(ScopedKBRef(scope=default_scope, id=raw))
-    return out
 
 
 def _fmt_kb_list(svc: Service, kbs: list[KnowledgeBase]) -> str:
@@ -105,37 +92,6 @@ class Server:
         from mcp.server.fastmcp import FastMCP
         mcp = FastMCP("knowledger", instructions=SERVER_INSTRUCTIONS)
         svc = self.svc
-
-        @mcp.tool()
-        def search_knowledge(
-            query: str,
-            scope: str = "",
-            kb_ids: list[str] | None = None,
-            limit: int = 10,
-            search_mode: str = "auto",
-        ) -> dict:
-            """PRIMARY recall tool — call FIRST before answering any project/domain/library/tool question."""
-            if svc is None:
-                return {"error": "service is not configured"}
-            try:
-                ds = _default_scope(scope, svc)
-                refs = _parse_kb_ids(kb_ids or [], ds)
-                result = svc.search(SearchOptions(query=query, kb_ids=refs, limit=limit or 10, search_mode=search_mode))
-                return {
-                    "hits": [
-                        {
-                            "item_id": h.item_id, "kb_id": h.kb_id, "scope": h.scope,
-                            "item_type": h.item_type, "title": h.title, "snippet": h.snippet,
-                            "score": h.score, "match_mode": h.match_mode,
-                            "source_backend": h.source_backend, "locator": h.locator,
-                            "metadata": h.metadata,
-                        }
-                        for h in result.hits
-                    ],
-                    "warnings": result.warnings,
-                }
-            except Exception as e:
-                return {"error": str(e)}
 
         @mcp.tool()
         def get_knowledge_item(kb_id: str, item_id: str, scope: str = "") -> dict:

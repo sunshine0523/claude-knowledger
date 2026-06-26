@@ -3,7 +3,7 @@ from collections.abc import Callable
 from typing import Any
 
 from knowledger.core.backend import IndexOptions, IndexProgressEvent, IndexProgressPhase, IndexResult
-from knowledger.core.types import KnowledgeBase, KnowledgeItem, SearchHit
+from knowledger.core.types import KnowledgeBase, KnowledgeItem
 from knowledger.indexing.chunking.splitter import Splitter, default_splitter
 from knowledger.indexing.chroma.client import ChromaClient
 from knowledger.indexing.semantic.config import semantic_enabled, get_collection_name
@@ -55,53 +55,6 @@ class Indexer:
         collection_name = get_collection_name(kb)
         collection = client.get_or_create_collection(collection_name)
         client.delete_by_parent(collection, kb.id, item_id)
-
-    def search(self, kb: KnowledgeBase, query: str, limit: int) -> list[SearchHit]:
-        query = query.strip()
-        if not query:
-            return []
-        client = self._get_client(kb)
-        collection_name = get_collection_name(kb)
-        collection = client.get_or_create_collection(collection_name)
-        raw = client.query(collection, query, limit)
-
-        # Deduplicate by parent_id, keeping the best score per parent
-        by_parent: dict[str, dict] = {}
-        for hit in raw:
-            meta = hit.get("metadata") or {}
-            if meta.get("kb_id") != kb.id:
-                continue
-            parent_id = meta.get("parent_id", "")
-            if not parent_id:
-                continue
-            distance = hit.get("distance", 1.0)
-            score = 1.0 / (1.0 + distance) if distance >= 0 else 0.0
-            if parent_id not in by_parent or score > by_parent[parent_id]["score"]:
-                by_parent[parent_id] = {
-                    "score": score,
-                    "title": meta.get("title", ""),
-                    "snippet": hit.get("document", ""),
-                    "metadata": meta,
-                }
-
-        results = [
-            SearchHit(
-                item_id=pid,
-                kb_id=kb.id,
-                title=v["title"],
-                snippet=v["snippet"],
-                content_preview=v["snippet"],
-                score=v["score"],
-                match_mode="semantic",
-                source_backend="chroma",
-                metadata=v["metadata"],
-            )
-            for pid, v in by_parent.items()
-        ]
-        results.sort(key=lambda h: h.score, reverse=True)
-        if limit > 0:
-            results = results[:limit]
-        return results
 
     def maintain_index(
         self,

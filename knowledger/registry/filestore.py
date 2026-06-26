@@ -76,7 +76,6 @@ def _rkb_to_dict(item: RuntimeKnowledgeBase) -> dict:
         "store_type": item.store_type,
         "store_config": item.store_config,
         "enabled": item.enabled,
-        "default_search_mode": item.default_search_mode,
         "indexing": item.indexing,
         "tags": item.tags,
     }
@@ -89,7 +88,6 @@ def _dict_to_rkb(d: dict) -> RuntimeKnowledgeBase:
         store_type=d.get("store_type", ""),
         store_config=d.get("store_config") or {},
         enabled=d.get("enabled", True),
-        default_search_mode=d.get("default_search_mode", ""),
         indexing=d.get("indexing") or {},
         tags=d.get("tags") or [],
     )

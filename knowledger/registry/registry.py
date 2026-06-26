@@ -148,7 +148,6 @@ def _static_to_core(item: KnowledgeBaseConfig) -> KnowledgeBase:
         store_type=item.store_type,
         store_config=item.store_config,
         enabled=item.enabled,
-        default_search_mode=item.default_search_mode,
         indexing=item.indexing,
         tags=item.tags,
     )
@@ -162,7 +161,6 @@ def _runtime_to_core(item: RuntimeKnowledgeBase, scope: str) -> KnowledgeBase:
         store_type=item.store_type,
         store_config=item.store_config,
         enabled=item.enabled,
-        default_search_mode=item.default_search_mode,
         indexing=item.indexing,
         tags=item.tags,
     )

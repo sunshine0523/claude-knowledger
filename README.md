@@ -8,11 +8,10 @@ Knowledger is a local-first knowledge aggregation tool for agents. It provides a
 
 - **Multiple backends**: SQLite and text-file knowledge bases.
 - **Local default storage**: runs without a config file using `~/.knowledger/db`.
-- **Lexical search**: SQLite FTS5 when available, plus text search for file-based stores.
-- **Semantic search**: SQLite knowledge bases can use Chroma for semantic or hybrid retrieval.
+- **Semantic indexing**: SQLite knowledge bases can use Chroma for semantic indexing.
 - **Embedded persistent Chroma**: the default setup does not require an external Chroma server.
-- **CLI workflow**: add, search, fetch, and list knowledge bases from the terminal.
-- **Web dashboard**: manage runtime knowledge bases, inspect items, and test search behavior.
+- **CLI workflow**: add, fetch, and list knowledge bases from the terminal.
+- **Web dashboard**: manage runtime knowledge bases and inspect items.
 - **MCP adapter foundation**: high-level tool definitions for agent integration.
 
 ## Requirements
@@ -60,12 +59,6 @@ go run ./cmd/knowledger add \
   --content "Knowledger stores local knowledge in SQLite."
 ```
 
-Search knowledge:
-
-```bash
-go run ./cmd/knowledger search --query SQLite --limit 10
-```
-
 Get an item by ID:
 
 ```bash
@@ -97,7 +90,6 @@ Pages:
 - `/` — dashboard overview
 - `/kbs` — knowledge base management
 - `/knowledge` — knowledge item browsing
-- `/search-lab` — search testing UI
 - `/debug` — diagnostics
 
 Runtime knowledge bases created from the Web dashboard are stored in `~/.knowledger/registry.json` by default. Static knowledge bases defined in `knowledger.yaml` are read-only in the dashboard. Deleting a runtime knowledge base removes only its registry entry; it does not delete SQLite databases, text directories, or Markdown files.
@@ -136,7 +128,7 @@ With an explicit config file:
 }
 ```
 
-The MCP server exposes `search_knowledge`, `get_knowledge_item`, `add_knowledge_item`, and `list_knowledge_bases`.
+The MCP server exposes `get_knowledge_item`, `add_knowledge_item`, and `list_knowledge_bases`.
 
 ## Configuration
 
@@ -155,7 +147,6 @@ go run ./cmd/knowledger --config knowledger.yaml serve
 Minimal SQLite config:
 
 ```yaml
-default_search_mode: auto
 runtime_registry_path: ~/.knowledger/registry.json
 server:
   address: ":34125"
@@ -167,8 +158,6 @@ knowledge_bases:
     store_config:
       path: ~/.knowledger/db
     indexing:
-      lexical:
-        enabled: true
       semantic:
         enabled: true
         provider: chroma
@@ -193,35 +182,12 @@ knowledge_bases:
 
 Text knowledge bases read and write `.md` and `.txt` files.
 
-## Search Modes
-
-Supported search modes:
-
-- `auto` — use the knowledge base default behavior.
-- `lexical` — keyword/FTS search.
-- `semantic` — vector search through Chroma for supported SQLite knowledge bases.
-- `hybrid` — combine semantic and lexical retrieval when supported.
-
-Example:
-
-```bash
-go run ./cmd/knowledger search --query "agent memory" --search-mode hybrid --limit 5
-```
-
-If semantic search is unavailable at query time, supported paths fall back to lexical search with warnings.
-
 ## Development
 
 Run tests:
 
 ```bash
 go test ./...
-```
-
-Run SQLite/FTS5 tests:
-
-```bash
-CGO_ENABLED=1 go test -tags fts5 ./...
 ```
 
 ## Project Status

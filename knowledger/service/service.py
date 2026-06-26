@@ -2,27 +2,18 @@ from __future__ import annotations
 
 import re
 import threading
-import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from knowledger.core import (
     AddInput, ErrorKind, IndexMaintainer, IndexOptions, IndexResult,
     IngestionResult, IndexStatus, KnowledgeBase, KnowledgeItem,
-    KnowledgerError, SearchHit, SearchOptions, ScopedKBRef, StoreBackend,
+    KnowledgerError, StoreBackend,
     SCOPE_GLOBAL, SCOPE_PROJECT, normalize_scope,
 )
 from knowledger.registry import KnowledgeBaseRecord, Registry, RuntimeKnowledgeBase, Source
 
 _KB_ID_PATTERN = re.compile(r'^[A-Za-z0-9_.\-]+$')
-_SNIPPET_CONTEXT = 120
-_FALLBACK_SNIPPET = 240
-
-
-@dataclass
-class SearchResult:
-    hits: list[SearchHit] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -97,37 +88,6 @@ class Service:
         svc = cls(registry=registry, build_backends=build_backends)
         svc.reload()
         return svc
-
-    def search(self, opt: SearchOptions) -> SearchResult:
-        self._refresh_if_changed_silently()
-        kbs, backends = self._snapshot()
-        result = SearchResult()
-        for kb in kbs:
-            if not kb.enabled or not _matches_kb_filter(kb.scope, kb.id, opt.kb_ids):
-                continue
-            backend = backends.get(kb.store_type)
-            if backend is None:
-                raise KnowledgerError(ErrorKind.CONFIG, f"backend not registered for store type {kb.store_type}")
-            effective_opt, warning = _search_options_for_kb(opt, kb, backend)
-            if warning:
-                result.warnings.append(warning)
-            try:
-                kb_hits = backend.search(kb, effective_opt)
-            except Exception as e:
-                if effective_opt.search_mode in ("semantic", "hybrid") and backend.supports_semantic(kb):
-                    fallback = SearchOptions(
-                        query=effective_opt.query, limit=effective_opt.limit,
-                        kb_ids=effective_opt.kb_ids, search_mode="lexical",
-                    )
-                    kb_hits = backend.search(kb, fallback)
-                    result.warnings.append(f"{kb.id}: semantic path unavailable, lexical fallback used")
-                else:
-                    raise
-            result.hits.extend(_stamp_scope(kb.scope, kb_hits))
-        result.hits.sort(key=lambda h: h.score, reverse=True)
-        if opt.limit > 0:
-            result.hits = result.hits[:opt.limit]
-        return self._with_search_snippets(opt.query, result, backends)
 
     def add(self, inp: AddInput) -> tuple[KnowledgeItem, IngestionResult, IndexStatus]:
         self._refresh_if_changed_silently()
@@ -321,31 +281,10 @@ class Service:
             return kb, backend
         raise KnowledgerError(ErrorKind.CONFIG, "knowledge base not found")
 
-    def _with_search_snippets(self, query: str, result: SearchResult, backends: dict[str, StoreBackend]) -> SearchResult:
-        kbs, _ = self._snapshot()
-        kb_map = {(kb.scope, kb.id): kb for kb in kbs}
-        for hit in result.hits:
-            kb = kb_map.get((hit.scope, hit.kb_id))
-            if kb is None:
-                _set_fallback_snippet(hit)
-                continue
-            backend = backends.get(kb.store_type)
-            if backend is None:
-                _set_fallback_snippet(hit)
-                continue
-            try:
-                item = backend.get_item(kb, hit.item_id)
-                snippet = _snippet_around_query(item.content, query)
-                hit.snippet = snippet
-                hit.content_preview = snippet
-            except Exception:
-                _set_fallback_snippet(hit)
-        return result
-
 
 def _normalize_create_input(inp: CreateKnowledgeBaseInput) -> RuntimeKnowledgeBase:
     import os
-    from knowledger.config import expand_home_path, apply_kb_defaults, KnowledgeBaseConfig, DEFAULT_SEARCH_MODE
+    from knowledger.config import expand_home_path, apply_kb_defaults, KnowledgeBaseConfig
 
     if not inp.id:
         raise ValueError("knowledge base id is required")
@@ -363,14 +302,14 @@ def _normalize_create_input(inp: CreateKnowledgeBaseInput) -> RuntimeKnowledgeBa
             info = os.stat(path)
             if not os.path.isdir(path):
                 raise ValueError(f"text knowledge base path {path!r} is not a directory")
-        store_config["path"] = path
+            store_config["path"] = path
     elif scope == SCOPE_GLOBAL:
         raise ValueError("knowledge base path is required")
     name = inp.name or inp.id
     cfg = KnowledgeBaseConfig(
         id=inp.id, name=name, store_type=inp.store_type,
         store_config=store_config, enabled=enabled,
-        default_search_mode=DEFAULT_SEARCH_MODE, tags=list(inp.tags),
+        tags=list(inp.tags),
     )
     if scope == SCOPE_GLOBAL:
         apply_kb_defaults(cfg)
@@ -387,84 +326,6 @@ def _normalize_create_input(inp: CreateKnowledgeBaseInput) -> RuntimeKnowledgeBa
     return RuntimeKnowledgeBase(
         id=cfg.id, name=cfg.name, store_type=cfg.store_type,
         store_config=cfg.store_config, enabled=cfg.enabled,
-        default_search_mode=cfg.default_search_mode,
         indexing=cfg.indexing, tags=cfg.tags,
     )
 
-
-def _search_options_for_kb(opt: SearchOptions, kb: KnowledgeBase, backend: StoreBackend) -> tuple[SearchOptions, str]:
-    from dataclasses import replace
-    requested = opt.search_mode
-    if not requested or requested == "auto":
-        requested = kb.default_search_mode
-    if not requested or requested == "auto":
-        requested = "lexical"
-    effective = SearchOptions(query=opt.query, limit=opt.limit, kb_ids=opt.kb_ids, search_mode=requested)
-    if requested in ("semantic", "hybrid") and not backend.supports_semantic(kb):
-        effective.search_mode = "lexical"
-        return effective, f"{kb.id}: {requested} search is not implemented for {kb.store_type} backend yet; lexical results returned"
-    return effective, ""
-
-
-def _matches_kb_filter(scope: str, kb_id: str, refs: list[ScopedKBRef]) -> bool:
-    if not refs:
-        return True
-    return any(r.id == kb_id and (not r.scope or r.scope == scope) for r in refs)
-
-
-def _stamp_scope(scope: str, hits: list[SearchHit]) -> list[SearchHit]:
-    for h in hits:
-        h.scope = scope
-    return hits
-
-
-def _set_fallback_snippet(hit: SearchHit) -> None:
-    text = hit.content_preview or hit.snippet
-    hit.snippet = _truncate_runes(text, _FALLBACK_SNIPPET)
-    hit.content_preview = hit.snippet
-
-
-def _snippet_around_query(content: str, query: str) -> str:
-    terms = [t for t in _query_terms(query) if t]
-    if not terms:
-        return _truncate_runes(content, _FALLBACK_SNIPPET)
-    first = terms[0]
-    lower_content = content.lower()
-    lower_term = first.lower()
-    idx = lower_content.find(lower_term)
-    if idx >= 0:
-        runes = list(content)
-        start = max(0, idx - _SNIPPET_CONTEXT)
-        end = min(len(runes), idx + len(first) + _SNIPPET_CONTEXT)
-        snippet = "".join(runes[start:end])
-        if start > 0:
-            snippet = "…" + snippet
-        if end < len(runes):
-            snippet += "…"
-        return snippet
-    return _truncate_runes(content, _FALLBACK_SNIPPET)
-
-
-def _truncate_runes(content: str, limit: int) -> str:
-    runes = list(content)
-    if len(runes) <= limit:
-        return content
-    return "".join(runes[:limit]) + "…"
-
-
-def _query_terms(query: str) -> list[str]:
-    def is_sep(c: str) -> bool:
-        cat = unicodedata.category(c)
-        return cat.startswith("Z") or cat.startswith("P") or cat.startswith("S")
-    parts = []
-    current: list[str] = []
-    for ch in query:
-        if is_sep(ch):
-            if current:
-                parts.append("".join(current))
-                current = []
-        else:
-            current.append(ch)
-    if current:
-        parts.append("".join(current))
-    return parts

@@ -3,12 +3,11 @@ from datetime import datetime, timezone
 
 import yaml
 
-from knowledger.core.backend import AddInput, IndexOptions, IndexResult, SearchOptions
+from knowledger.core.backend import AddInput, IndexOptions, IndexResult
 from knowledger.core.errors import ErrorKind, KnowledgerError
 from knowledger.core.types import (
-    IngestionResult, IndexStatus, KnowledgeBase, KnowledgeItem, SearchHit,
+    IngestionResult, IndexStatus, KnowledgeBase, KnowledgeItem,
 )
-from knowledger.core.utils import tokenize_query
 
 
 def _now_iso() -> str:
@@ -124,72 +123,6 @@ class Backend:
             return item, IngestionResult(success=True, item_id=item_id), IndexStatus(state="indexed")
         return item, IngestionResult(success=True, item_id=item_id), IndexStatus(state="not_indexed")
 
-    def search(self, kb: KnowledgeBase, opt: SearchOptions) -> list[SearchHit]:
-        mode = opt.search_mode
-        if mode == "semantic":
-            if self.indexer and self.indexer.supports_kb(kb):
-                hits = self.indexer.search(kb, opt.query, opt.limit, "semantic")
-                return self._enrich(kb, hits)
-            return self._lexical_search(kb, opt)
-        if mode == "hybrid":
-            if self.indexer and self.indexer.supports_kb(kb):
-                sem = self._enrich(kb, self.indexer.search(kb, opt.query, opt.limit, "hybrid"))
-                lex = self._lexical_search(kb, opt)
-                return _merge_hits(lex, sem, opt.limit)
-            return self._lexical_search(kb, opt)
-        return self._lexical_search(kb, opt)
-
-    def _lexical_search(self, kb: KnowledgeBase, opt: SearchOptions) -> list[SearchHit]:
-        dir_ = self._dir(kb)
-        tokens = tokenize_query(opt.query)
-        if not tokens:
-            return []
-        lower_tokens = [t.lower() for t in tokens]
-        if not os.path.isdir(dir_):
-            return []
-        hits = []
-        for fname in os.listdir(dir_):
-            if not (fname.endswith(".md") or fname.endswith(".txt")):
-                continue
-            fpath = os.path.join(dir_, fname)
-            if not os.path.isfile(fpath):
-                continue
-            try:
-                item = _read_file(fpath, kb.id)
-            except Exception:
-                continue
-            lower = (item.title + " " + item.content).lower()
-            if any(tok in lower for tok in lower_tokens):
-                hits.append(SearchHit(
-                    item_id=item.id,
-                    kb_id=kb.id,
-                    item_type="document",
-                    title=item.title,
-                    snippet=opt.query,
-                    content_preview=item.content,
-                    score=1.0,
-                    match_mode="lexical",
-                    source_backend="text",
-                    locator=fpath,
-                ))
-        if opt.limit > 0:
-            hits = hits[:opt.limit]
-        return hits
-
-    def _enrich(self, kb: KnowledgeBase, hits: list[SearchHit]) -> list[SearchHit]:
-        dir_ = kb.store_config.get("path", "")
-        out = []
-        for hit in hits:
-            fpath = os.path.join(dir_, f"{hit.item_id}.md")
-            if not os.path.isfile(fpath):
-                continue
-            hit.title = hit.title or hit.item_id
-            hit.locator = fpath
-            hit.source_backend = "text"
-            hit.item_type = "document"
-            out.append(hit)
-        return out
-
     def get_item(self, kb: KnowledgeBase, item_id: str) -> KnowledgeItem:
         dir_ = self._dir(kb)
         fpath = os.path.join(dir_, f"{item_id}.md")
@@ -236,18 +169,3 @@ class Backend:
             lambda item: {"path": f"{item.id}.md", "mtime": int(os.stat(os.path.join(dir_, f'{item.id}.md')).st_mtime) if os.path.isfile(os.path.join(dir_, f'{item.id}.md')) else 0},
         )
 
-    def supports_semantic(self, kb: KnowledgeBase) -> bool:
-        return self.indexer is not None and self.indexer.supports_kb(kb)
-
-
-def _merge_hits(primary: list[SearchHit], secondary: list[SearchHit], limit: int) -> list[SearchHit]:
-    seen = {h.item_id for h in primary}
-    merged = [*primary]
-    for h in secondary:
-        if h.item_id not in seen:
-            merged.append(h)
-            seen.add(h.item_id)
-        h.match_mode = "hybrid"
-    for h in merged:
-        h.match_mode = "hybrid"
-    return merged[:limit] if limit > 0 else merged

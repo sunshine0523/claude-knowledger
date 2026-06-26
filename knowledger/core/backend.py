@@ -4,22 +4,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from knowledger.core.types import (
-    IngestionResult, IndexStatus, KnowledgeBase, KnowledgeItem, SearchHit
+    IngestionResult, IndexStatus, KnowledgeBase, KnowledgeItem
 )
-
-
-@dataclass
-class ScopedKBRef:
-    scope: str
-    id: str
-
-
-@dataclass
-class SearchOptions:
-    query: str = ""
-    limit: int = 0
-    kb_ids: list[ScopedKBRef] = field(default_factory=list)
-    search_mode: str = ""
 
 
 @dataclass
@@ -75,10 +61,6 @@ class StoreBackend(ABC):
         ...
 
     @abstractmethod
-    def search(self, kb: KnowledgeBase, opt: SearchOptions) -> list[SearchHit]:
-        ...
-
-    @abstractmethod
     def get_item(self, kb: KnowledgeBase, item_id: str) -> KnowledgeItem:
         ...
 
@@ -88,10 +70,6 @@ class StoreBackend(ABC):
 
     @abstractmethod
     def delete_item(self, kb: KnowledgeBase, item_id: str) -> None:
-        ...
-
-    @abstractmethod
-    def supports_semantic(self, kb: KnowledgeBase) -> bool:
         ...
 
 

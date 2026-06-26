@@ -2,13 +2,13 @@
 
 This plugin connects Claude Code to Knowledger through the existing `knowledger mcp` command and adds skill instructions for better retrieval and capture timing.
 
-The plugin is intentionally thin. Knowledger's Go binary remains the source of truth for storage, indexing, search, and MCP tool behavior.
+The plugin is intentionally thin. Knowledger's Go binary remains the source of truth for storage, indexing, and MCP tool behavior.
 
 ## What It Provides
 
 - A Claude Code plugin manifest at `.claude-plugin/plugin.json`.
 - An MCP server configuration named `knowledger` that runs `knowledger mcp`.
-- A `knowledger` skill that tells Claude when to search saved knowledge and when to propose durable capture.
+- A `knowledger` skill that tells Claude when to scan saved knowledge and when to propose durable capture.
 
 ## Prerequisites
 
@@ -71,14 +71,13 @@ If `knowledger` is not on `PATH`, install it or start Claude Code from a shell w
 
 The MCP server exposes:
 
-- `search_knowledge`
 - `get_knowledge_item`
 - `add_knowledge_item`
 - `list_knowledge_bases`
 
 ## Safety
 
-Claude may search Knowledger automatically when the skill trigger is strong. Writing knowledge should happen only when the user explicitly asks for capture or clearly confirms it.
+Claude may scan Knowledger automatically when the skill trigger is strong. Writing knowledge should happen only when the user explicitly asks for capture or clearly confirms it.
 
 Do not store secrets, credentials, private tokens, one-off task state, or information that is already derivable from the repository.
 
@@ -91,4 +90,4 @@ If Claude Code cannot start the MCP server, check:
 3. At least one knowledge base is configured or the default local storage can be initialized.
 4. The plugin validates with `claude plugin validate ./plugins/claude-code-knowledger`.
 
-If the MCP server starts but retrieval is poor, verify the target knowledge base contains relevant items and try a lexical search through the Knowledger CLI first.
+If the MCP server starts but retrieval is poor, verify the target knowledge base contains relevant items and try listing items through the Knowledger CLI first.

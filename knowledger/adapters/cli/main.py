@@ -5,7 +5,7 @@ from typing import Optional
 
 import typer
 
-from knowledger.core import normalize_scope, SCOPE_GLOBAL, SCOPE_PROJECT, SearchOptions, AddInput, ScopedKBRef
+from knowledger.core import normalize_scope, SCOPE_GLOBAL, SCOPE_PROJECT, AddInput
 from knowledger.service.service import Service, IndexKnowledgeInput, CreateKnowledgeBaseInput
 
 # Global service state set by create_app callback
@@ -84,25 +84,6 @@ def create_app() -> typer.Typer:
         body = content if content is not None else sys.stdin.read()
         item, _, _ = svc.add(AddInput(kb_id=kb, scope=effective, title=title, content=body, tags=tags))
         typer.echo(item.id)
-
-    @app.command()
-    def search(
-        kb: Optional[str] = typer.Option(None, "--kb", help="knowledge base id"),
-        scope: str = typer.Option("", "--scope"),
-        limit: int = typer.Option(10, "--limit"),
-        mode: str = typer.Option("", "--mode", help="search mode"),
-        query: str = typer.Argument(...),
-    ):
-        """Search knowledge."""
-        svc = _get_svc()
-        refs: list[ScopedKBRef] = []
-        if kb:
-            effective = _effective_scope(scope)
-            refs = [ScopedKBRef(scope=effective, id=kb)]
-        result = svc.search(SearchOptions(query=query, limit=limit, kb_ids=refs, search_mode=mode))
-        for hit in result.hits:
-            typer.echo(f"{hit.score:.3f} [{hit.scope}:{hit.kb_id}] {hit.title}")
-            typer.echo(f"  {hit.snippet}")
 
     @app.command()
     def get(
