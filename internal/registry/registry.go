@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/kindbrave/knowledger/internal/config"
-	"github.com/kindbrave/knowledger/internal/core"
+	"github.com/kindbrave/claude-knowledger/internal/config"
+	"github.com/kindbrave/claude-knowledger/internal/core"
 )
 
 const (

@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/kindbrave/knowledger/internal/app"
+	"github.com/kindbrave/claude-knowledger/internal/app"
 )
 
 func main() {

@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	sqlitebackend "github.com/kindbrave/knowledger/internal/backends/sqlite"
-	"github.com/kindbrave/knowledger/internal/core"
-	"github.com/kindbrave/knowledger/internal/indexing/chroma"
-	"github.com/kindbrave/knowledger/internal/indexing/semantic"
+	sqlitebackend "github.com/kindbrave/claude-knowledger/internal/backends/sqlite"
+	"github.com/kindbrave/claude-knowledger/internal/core"
+	"github.com/kindbrave/claude-knowledger/internal/indexing/chroma"
+	"github.com/kindbrave/claude-knowledger/internal/indexing/semantic"
 )
 
 func indexerOption(factory chroma.Factory) sqlitebackend.Option {

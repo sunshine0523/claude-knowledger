@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"net/http"
 
-	webadapter "github.com/kindbrave/knowledger/internal/adapters/web"
-	"github.com/kindbrave/knowledger/internal/service"
+	webadapter "github.com/kindbrave/claude-knowledger/internal/adapters/web"
+	"github.com/kindbrave/claude-knowledger/internal/service"
 	"github.com/spf13/cobra"
 )
 

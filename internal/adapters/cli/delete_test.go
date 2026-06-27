@@ -8,9 +8,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/kindbrave/knowledger/internal/adapters/cli"
-	"github.com/kindbrave/knowledger/internal/core"
-	"github.com/kindbrave/knowledger/internal/service"
+	"github.com/kindbrave/claude-knowledger/internal/adapters/cli"
+	"github.com/kindbrave/claude-knowledger/internal/core"
+	"github.com/kindbrave/claude-knowledger/internal/service"
 )
 
 type deleteCommandBackend struct {

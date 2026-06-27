@@ -8,9 +8,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/kindbrave/knowledger/internal/core"
-	"github.com/kindbrave/knowledger/internal/indexing/chroma"
-	"github.com/kindbrave/knowledger/internal/indexing/chunking"
+	"github.com/kindbrave/claude-knowledger/internal/core"
+	"github.com/kindbrave/claude-knowledger/internal/indexing/chroma"
+	"github.com/kindbrave/claude-knowledger/internal/indexing/chunking"
 )
 
 type Indexer struct {

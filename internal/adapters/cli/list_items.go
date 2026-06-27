@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/kindbrave/knowledger/internal/service"
+	"github.com/kindbrave/claude-knowledger/internal/service"
 	"github.com/spf13/cobra"
 )
 

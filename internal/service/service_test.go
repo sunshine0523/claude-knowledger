@@ -8,13 +8,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kindbrave/knowledger/internal/backends/text"
-	"github.com/kindbrave/knowledger/internal/config"
-	"github.com/kindbrave/knowledger/internal/core"
-	"github.com/kindbrave/knowledger/internal/indexing/chroma"
-	"github.com/kindbrave/knowledger/internal/indexing/semantic"
-	"github.com/kindbrave/knowledger/internal/registry"
-	"github.com/kindbrave/knowledger/internal/service"
+	"github.com/kindbrave/claude-knowledger/internal/backends/text"
+	"github.com/kindbrave/claude-knowledger/internal/config"
+	"github.com/kindbrave/claude-knowledger/internal/core"
+	"github.com/kindbrave/claude-knowledger/internal/indexing/chroma"
+	"github.com/kindbrave/claude-knowledger/internal/indexing/semantic"
+	"github.com/kindbrave/claude-knowledger/internal/registry"
+	"github.com/kindbrave/claude-knowledger/internal/service"
 )
 
 type fakeSemanticTextBackend struct{}

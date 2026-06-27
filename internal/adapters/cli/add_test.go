@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kindbrave/knowledger/internal/adapters/cli"
-	"github.com/kindbrave/knowledger/internal/app"
-	"github.com/kindbrave/knowledger/internal/config"
-	"github.com/kindbrave/knowledger/internal/core"
-	"github.com/kindbrave/knowledger/internal/service"
+	"github.com/kindbrave/claude-knowledger/internal/adapters/cli"
+	"github.com/kindbrave/claude-knowledger/internal/app"
+	"github.com/kindbrave/claude-knowledger/internal/config"
+	"github.com/kindbrave/claude-knowledger/internal/core"
+	"github.com/kindbrave/claude-knowledger/internal/service"
 )
 
 type addCommandBackend struct{}

@@ -3,7 +3,7 @@ package core_test
 import (
 	"testing"
 
-	"github.com/kindbrave/knowledger/internal/core"
+	"github.com/kindbrave/claude-knowledger/internal/core"
 )
 
 func TestNormalizeScopeAcceptsKnownValues(t *testing.T) {

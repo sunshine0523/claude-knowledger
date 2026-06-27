@@ -11,9 +11,9 @@ import (
 	"sync"
 	"unicode"
 
-	"github.com/kindbrave/knowledger/internal/config"
-	"github.com/kindbrave/knowledger/internal/core"
-	"github.com/kindbrave/knowledger/internal/registry"
+	"github.com/kindbrave/claude-knowledger/internal/config"
+	"github.com/kindbrave/claude-knowledger/internal/core"
+	"github.com/kindbrave/claude-knowledger/internal/registry"
 )
 
 type SearchResult struct {

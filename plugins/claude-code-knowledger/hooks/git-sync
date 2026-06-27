@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+command -v knowledger >/dev/null 2>&1 || exit 0
+command -v python3 >/dev/null 2>&1 || exit 0
+
+knowledger kb-git-knowledge-list 2>/dev/null | python3 -c "
+import json, sys, subprocess
+try:
+    kbs = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for kb in kbs:
+    scope, kid = kb.get('scope', 'global'), kb.get('id', '')
+    if not kid:
+        continue
+    r = subprocess.run(
+        ['knowledger', '--scope', scope, 'kb-git-knowledge-pull', '--id', kid],
+        capture_output=True, text=True
+    )
+    if r.returncode == 0 and 'Already up to date.' not in r.stdout:
+        subprocess.run(
+            ['knowledger', '--scope', scope, 'index', '--kb', kid, '--quiet'],
+            capture_output=True
+        )
+" 2>/dev/null || true
+
+exit 0

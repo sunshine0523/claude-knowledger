@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kindbrave/knowledger/internal/indexing"
+	"github.com/kindbrave/claude-knowledger/internal/indexing"
 )
 
 func TestWorkerMarksQueuedJobIndexed(t *testing.T) {

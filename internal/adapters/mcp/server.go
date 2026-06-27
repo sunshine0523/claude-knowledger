@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/kindbrave/knowledger/internal/core"
-	"github.com/kindbrave/knowledger/internal/service"
+	"github.com/kindbrave/claude-knowledger/internal/core"
+	"github.com/kindbrave/claude-knowledger/internal/service"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
@@ -269,7 +269,38 @@ func (s *Server) registerTools() {
 		mcpgo.WithOpenWorldHintAnnotation(false),
 	)
 
-	s.tools = []mcpgo.Tool{getTool, listItemsTool, addTool, deleteTool, listTool, createKBTool, deleteKBTool, indexTool}
+	gitKnowledgeAddTool := mcpgo.NewTool(
+		"git_knowledge_add",
+		mcpgo.WithDescription("Clone a git repository as a text knowledge base. Stores to ~/.knowledger/git-knowledge/<id>/ (global) or <project>/.knowledger/git-knowledge/<id>/ (project) and registers it. After cloning, call index_knowledge to index it."),
+		scopeProperty,
+		mcpgo.WithString("url", mcpgo.Required(), mcpgo.Description("Git repository URL to clone.")),
+		mcpgo.WithString("id", mcpgo.Description("Knowledge base ID (derived from repository name if omitted).")),
+		mcpgo.WithString("name", mcpgo.Description("Human-readable name (defaults to id).")),
+		mcpgo.WithReadOnlyHintAnnotation(false),
+		mcpgo.WithDestructiveHintAnnotation(false),
+		mcpgo.WithIdempotentHintAnnotation(false),
+		mcpgo.WithOpenWorldHintAnnotation(false),
+	)
+	gitKnowledgePullTool := mcpgo.NewTool(
+		"git_knowledge_pull",
+		mcpgo.WithDescription("Pull latest changes for a git-knowledge knowledge base. After pulling, call index_knowledge to reindex."),
+		scopeProperty,
+		mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Knowledge base ID.")),
+		mcpgo.WithReadOnlyHintAnnotation(false),
+		mcpgo.WithDestructiveHintAnnotation(false),
+		mcpgo.WithIdempotentHintAnnotation(true),
+		mcpgo.WithOpenWorldHintAnnotation(false),
+	)
+	gitKnowledgeListTool := mcpgo.NewTool(
+		"git_knowledge_list",
+		mcpgo.WithDescription("List all git-knowledge knowledge bases from global (~/.knowledger/git-knowledge/) and project (.knowledger/git-knowledge/) directories."),
+		mcpgo.WithReadOnlyHintAnnotation(true),
+		mcpgo.WithDestructiveHintAnnotation(false),
+		mcpgo.WithIdempotentHintAnnotation(true),
+		mcpgo.WithOpenWorldHintAnnotation(false),
+	)
+
+	s.tools = []mcpgo.Tool{getTool, listItemsTool, addTool, deleteTool, listTool, createKBTool, deleteKBTool, indexTool, gitKnowledgeAddTool, gitKnowledgePullTool, gitKnowledgeListTool}
 	s.server.AddTool(getTool, s.handleGetKnowledgeItem)
 	s.server.AddTool(listItemsTool, s.handleListKnowledgeItems)
 	s.server.AddTool(addTool, s.handleAddKnowledgeItem)
@@ -278,6 +309,9 @@ func (s *Server) registerTools() {
 	s.server.AddTool(createKBTool, s.handleCreateKnowledgeBase)
 	s.server.AddTool(deleteKBTool, s.handleDeleteKnowledgeBase)
 	s.server.AddTool(indexTool, s.handleIndexKnowledge)
+	s.server.AddTool(gitKnowledgeAddTool, s.handleGitKnowledgeAdd)
+	s.server.AddTool(gitKnowledgePullTool, s.handleGitKnowledgePull)
+	s.server.AddTool(gitKnowledgeListTool, s.handleGitKnowledgeList)
 }
 
 func (s *Server) handleGetKnowledgeItem(ctx context.Context, request mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {

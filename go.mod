@@ -1,4 +1,4 @@
-module github.com/kindbrave/knowledger
+module github.com/kindbrave/claude-knowledger
 
 go 1.24.11
 

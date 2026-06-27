@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kindbrave/knowledger/internal/core"
-	"github.com/kindbrave/knowledger/internal/registry"
-	"github.com/kindbrave/knowledger/internal/service"
-	webassets "github.com/kindbrave/knowledger/web"
+	"github.com/kindbrave/claude-knowledger/internal/core"
+	"github.com/kindbrave/claude-knowledger/internal/registry"
+	"github.com/kindbrave/claude-knowledger/internal/service"
+	webassets "github.com/kindbrave/claude-knowledger/web"
 )
 
 type webService interface {

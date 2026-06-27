@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/kindbrave/knowledger/internal/core"
+	"github.com/kindbrave/claude-knowledger/internal/core"
 )
 
 func TestTokenizeQuery(t *testing.T) {

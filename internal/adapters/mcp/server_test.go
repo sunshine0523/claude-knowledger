@@ -10,11 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	mcpadapter "github.com/kindbrave/knowledger/internal/adapters/mcp"
-	"github.com/kindbrave/knowledger/internal/backends/text"
-	"github.com/kindbrave/knowledger/internal/core"
-	"github.com/kindbrave/knowledger/internal/registry"
-	"github.com/kindbrave/knowledger/internal/service"
+	mcpadapter "github.com/kindbrave/claude-knowledger/internal/adapters/mcp"
+	"github.com/kindbrave/claude-knowledger/internal/backends/text"
+	"github.com/kindbrave/claude-knowledger/internal/core"
+	"github.com/kindbrave/claude-knowledger/internal/registry"
+	"github.com/kindbrave/claude-knowledger/internal/service"
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 )

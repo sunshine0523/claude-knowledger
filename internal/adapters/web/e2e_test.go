@@ -11,10 +11,10 @@ import (
 	"strings"
 	"testing"
 
-	webadapter "github.com/kindbrave/knowledger/internal/adapters/web"
-	"github.com/kindbrave/knowledger/internal/app"
-	"github.com/kindbrave/knowledger/internal/config"
-	"github.com/kindbrave/knowledger/internal/core"
+	webadapter "github.com/kindbrave/claude-knowledger/internal/adapters/web"
+	"github.com/kindbrave/claude-knowledger/internal/app"
+	"github.com/kindbrave/claude-knowledger/internal/config"
+	"github.com/kindbrave/claude-knowledger/internal/core"
 )
 
 func contains(haystack, needle string) bool { return strings.Contains(haystack, needle) }

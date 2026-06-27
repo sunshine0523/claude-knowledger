@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kindbrave/knowledger/internal/backends/text"
-	"github.com/kindbrave/knowledger/internal/core"
-	"github.com/kindbrave/knowledger/internal/indexing/chroma"
-	"github.com/kindbrave/knowledger/internal/indexing/semantic"
+	"github.com/kindbrave/claude-knowledger/internal/backends/text"
+	"github.com/kindbrave/claude-knowledger/internal/core"
+	"github.com/kindbrave/claude-knowledger/internal/indexing/chroma"
+	"github.com/kindbrave/claude-knowledger/internal/indexing/semantic"
 )
 
 func newTextSemanticKB(dir, chromaPath string) core.KnowledgeBase {

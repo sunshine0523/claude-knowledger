@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kindbrave/knowledger/internal/config"
+	"github.com/kindbrave/claude-knowledger/internal/config"
 )
 
 func TestLoadAppliesDefaultsAndReadsKnowledgeBases(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/kindbrave/knowledger/internal/projectroot"
+	"github.com/kindbrave/claude-knowledger/internal/projectroot"
 )
 
 func TestDiscoverFromFindsClosestKnowledgerDir(t *testing.T) {

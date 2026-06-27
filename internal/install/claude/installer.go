@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	pluginbundle "github.com/kindbrave/knowledger/plugins/claude-code-knowledger"
+	pluginbundle "github.com/kindbrave/claude-knowledger/plugins/claude-code-knowledger"
 )
 
 const (

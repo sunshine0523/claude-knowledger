@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/kindbrave/knowledger/internal/core"
-	"github.com/kindbrave/knowledger/internal/indexing/chroma"
+	"github.com/kindbrave/claude-knowledger/internal/core"
+	"github.com/kindbrave/claude-knowledger/internal/indexing/chroma"
 )
 
 type ItemSource func(ctx context.Context) ([]core.KnowledgeItem, error)

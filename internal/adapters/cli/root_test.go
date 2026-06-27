@@ -5,7 +5,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/kindbrave/knowledger/internal/adapters/cli"
+	"github.com/kindbrave/claude-knowledger/internal/adapters/cli"
 )
 
 func TestRootCommandShowsSearchAndGetSubcommands(t *testing.T) {

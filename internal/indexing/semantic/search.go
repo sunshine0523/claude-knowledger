@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/kindbrave/knowledger/internal/core"
-	"github.com/kindbrave/knowledger/internal/indexing/chroma"
+	"github.com/kindbrave/claude-knowledger/internal/core"
+	"github.com/kindbrave/claude-knowledger/internal/indexing/chroma"
 )
 
 // Search runs a single embedding query against chroma using the full query

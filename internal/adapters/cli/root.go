@@ -3,8 +3,8 @@ package cli
 import (
 	"io"
 
-	"github.com/kindbrave/knowledger/internal/config"
-	"github.com/kindbrave/knowledger/internal/service"
+	"github.com/kindbrave/claude-knowledger/internal/config"
+	"github.com/kindbrave/claude-knowledger/internal/service"
 	"github.com/spf13/cobra"
 )
 
@@ -35,5 +35,8 @@ func NewRootCommandWithAddressAndRunners(svc *service.Service, address string, r
 	cmd.AddCommand(newServeCommand(svc, address))
 	cmd.AddCommand(newMCPCommand(runMCP))
 	cmd.AddCommand(newInstallCommand(runClaudeInstall, runOpenCodeInstall))
+	cmd.AddCommand(newKBGitKnowledgeAddCommand(svc))
+	cmd.AddCommand(newKBGitKnowledgePullCommand(svc))
+	cmd.AddCommand(newKBGitKnowledgeListCommand(svc))
 	return cmd
 }

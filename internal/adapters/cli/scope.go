@@ -1,6 +1,6 @@
 package cli
 
-import "github.com/kindbrave/knowledger/internal/core"
+import "github.com/kindbrave/claude-knowledger/internal/core"
 
 // EffectiveScope resolves the scope a CLI subcommand should act on.
 // flag is the value of the persistent --scope flag (may be empty).
