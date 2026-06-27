@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-REPO="kindbrave/claude-knowledger"
+REPO="sunshine0523/claude-knowledger"
 BINARY="knowledger"
 
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')

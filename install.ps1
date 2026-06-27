@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$Repo = "kindbrave/claude-knowledger"
+$Repo = "sunshine0523/claude-knowledger"
 $Binary = "knowledger.exe"
 
 $Arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq "Arm64") { "arm64" } else { "amd64" }

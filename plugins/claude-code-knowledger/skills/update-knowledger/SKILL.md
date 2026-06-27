@@ -45,13 +45,13 @@ digraph update_flow {
 **macOS / Linux:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kindbrave/claude-knowledger/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/sunshine0523/claude-knowledger/main/install.sh | sh
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-irm https://raw.githubusercontent.com/kindbrave/claude-knowledger/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/sunshine0523/claude-knowledger/main/install.ps1 | iex
 ```
 
 The script auto-detects OS and architecture, downloads the latest release from GitHub, and installs to `/usr/local/bin` (or `~/.local/bin` if not writable).
