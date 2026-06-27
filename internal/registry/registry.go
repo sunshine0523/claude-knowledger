@@ -295,7 +295,7 @@ func applyProjectDefaults(item *RuntimeKnowledgeBase, projectRoot string) error 
 		}
 	}
 
-	if item.StoreType != "sqlite" {
+	if item.StoreType != "sqlite" && item.StoreType != "text" {
 		return nil
 	}
 	if item.Indexing == nil {

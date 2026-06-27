@@ -240,7 +240,7 @@ func TestLoadSQLiteKnowledgeBaseRejectsNonStringSemanticMode(t *testing.T) {
 	}
 }
 
-func TestApplyDefaultsTextWithoutSemanticLeavesIndexingAlone(t *testing.T) {
+func TestApplyDefaultsTextWithoutSemanticEnablesByDefault(t *testing.T) {
 	cfg := config.Config{KnowledgeBases: []config.KnowledgeBaseConfig{
 		{ID: "docs", Name: "Docs", StoreType: "text", Enabled: true, StoreConfig: map[string]any{"path": "/tmp/docs"}},
 	}}
@@ -248,11 +248,12 @@ func TestApplyDefaultsTextWithoutSemanticLeavesIndexingAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	semantic, ok := cfg.KnowledgeBases[0].Indexing["semantic"]
-	if ok && semantic != nil {
-		m := semantic.(map[string]any)
-		if enabled, _ := m["enabled"].(bool); enabled {
-			t.Fatalf("text without explicit semantic must not flip enabled true: %#v", m)
-		}
+	if !ok || semantic == nil {
+		t.Fatal("text without explicit semantic should have semantic defaults applied")
+	}
+	m := semantic.(map[string]any)
+	if enabled, _ := m["enabled"].(bool); !enabled {
+		t.Fatalf("text without explicit semantic should have semantic.enabled=true by default: %#v", m)
 	}
 }
 

@@ -155,19 +155,6 @@ func applySemanticIndexingDefaults(kb *KnowledgeBaseConfig) error {
 	lexical := ensureMap(kb.Indexing, "lexical")
 	setDefault(lexical, "enabled", true)
 
-	if kb.StoreType == "text" {
-		// For text, only fill in defaults if the user actually specified a semantic block.
-		rawSemantic, hasSemantic := kb.Indexing["semantic"]
-		if !hasSemantic {
-			return nil
-		}
-		semantic, ok := rawSemantic.(map[string]any)
-		if !ok {
-			return nil
-		}
-		return fillChromaDefaults(kb, semantic)
-	}
-
 	semantic := ensureMap(kb.Indexing, "semantic")
 	setDefault(semantic, "enabled", true)
 	return fillChromaDefaults(kb, semantic)
