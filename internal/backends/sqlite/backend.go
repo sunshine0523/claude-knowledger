@@ -14,7 +14,7 @@ import (
 
 	"github.com/kindbrave/claude-knowledger/internal/core"
 	"github.com/kindbrave/claude-knowledger/internal/indexing/semantic"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 //go:embed schema.sql
@@ -50,7 +50,7 @@ func New(path string, opts ...Option) (*Backend, error) {
 	if err := prepareDatabasePath(path); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite3", path)
+	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err
 	}

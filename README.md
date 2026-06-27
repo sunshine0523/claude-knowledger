@@ -17,8 +17,7 @@ Knowledger is a local-first knowledge aggregation tool for agents. It provides a
 
 ## Requirements
 
-- Go 1.24+
-- CGO-enabled Go toolchain
+- Go 1.25+
 
 ## Installation
 
@@ -36,7 +35,7 @@ irm https://raw.githubusercontent.com/sunshine0523/claude-knowledger/main/instal
 
 The script detects your OS and architecture, downloads the correct binary from the [latest release](https://github.com/sunshine0523/claude-knowledger/releases/latest), and installs it to `/usr/local/bin` (or `~/.local/bin` if `/usr/local/bin` is not writable).
 
-**Build from source** (requires Go 1.24+ with CGO):
+**Build from source** (requires Go 1.25+, no CGO needed):
 
 ```bash
 git clone https://github.com/sunshine0523/claude-knowledger.git
@@ -195,7 +194,7 @@ go test ./...
 Run SQLite/FTS5 tests:
 
 ```bash
-CGO_ENABLED=1 go test -tags fts5 ./...
+go test -tags fts5 ./...
 ```
 
 ## Project Status
