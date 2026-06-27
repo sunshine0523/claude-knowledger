@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -32,7 +31,7 @@ reads, and codegraph cannot find.
 
 ## Recall — call BEFORE answering
 
-Call search_knowledge BEFORE answering ANY of these question shapes,
+Call list_knowledge_bases BEFORE answering ANY of these question shapes,
 even when the user does not say "knowledge / 知识库 / 记得":
 
 - "How do I use X" / "X 怎么用"
@@ -43,8 +42,8 @@ even when the user does not say "knowledge / 知识库 / 记得":
 - "Where do we store/track X"
 - Any debugging question that could have a saved recipe.
 
-One cheap query. If hits are weak, list_knowledge_items the relevant
-KBs — title/tag scans often surface what semantic search missed.
+One cheap call. Scan the KB and item titles — if any look relevant,
+call get_knowledge_item for the full content.
 
 ## Capture — only on explicit user intent
 
@@ -65,14 +64,6 @@ type Server struct {
 }
 
 type ToolForTest = mcpgo.Tool
-
-type searchKnowledgeInput struct {
-	Query      string            `json:"query"`
-	KBIDs      []json.RawMessage `json:"kb_ids,omitempty"`
-	Scope      string            `json:"scope,omitempty"`
-	Limit      int               `json:"limit,omitempty"`
-	SearchMode string            `json:"search_mode,omitempty"`
-}
 
 type getKnowledgeItemInput struct {
 	Scope  string `json:"scope,omitempty"`
@@ -144,25 +135,6 @@ type indexKnowledgeInput struct {
 	Rebuild bool   `json:"rebuild,omitempty"`
 }
 
-type searchKnowledgeResult struct {
-	Hits     []searchKnowledgeHit
-	Warnings []string
-}
-
-type searchKnowledgeHit struct {
-	ItemID        string
-	KBID          string
-	Scope         string
-	ItemType      string
-	Title         string
-	Snippet       string
-	Score         float64
-	MatchMode     string
-	SourceBackend string
-	Locator       string
-	Metadata      map[string]any
-}
-
 func NewServer(svc *service.Service) *Server {
 	adapter := &Server{svc: svc, server: mcpserver.NewMCPServer(
 		serverName,
@@ -198,48 +170,14 @@ func (s *Server) logModeBanner(w *os.File) {
 func (s *Server) LogModeBannerForTest(w *os.File) { s.logModeBanner(w) }
 
 func (s *Server) registerTools() {
-	kbIDsItemSchema := map[string]any{
-		"oneOf": []any{
-			map[string]any{
-				"type":        "string",
-				"description": `Bare id ("notes") or "scope:id" ("project:notes").`,
-			},
-			map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"scope": map[string]any{"type": "string", "enum": []string{"project", "global"}},
-					"id":    map[string]any{"type": "string"},
-				},
-				"required":             []string{"id"},
-				"additionalProperties": false,
-			},
-		},
-	}
 	scopeProperty := mcpgo.WithString(
 		"scope",
 		mcpgo.Description("Knowledge base scope. Defaults to project when running in a project directory, otherwise global."),
 		mcpgo.Enum("project", "global"),
 	)
-	searchTool := mcpgo.NewTool(
-		"search_knowledge",
-		mcpgo.WithDescription("PRIMARY recall tool — call FIRST before answering any project/domain/library/tool question (e.g. 'how to X', 'what is Y', 'how does Z work', 'what's our convention for W'), even when the user does not say 'knowledge / 知识库'. One cheap query. If hits are weak or zero, also call list_knowledge_items on plausibly-relevant KBs — title/tag scans often surface entries semantic/keyword search missed. Inside a project directory scope defaults to project; otherwise global."),
-		mcpgo.WithString("query", mcpgo.Required(), mcpgo.Description("Search query.")),
-		mcpgo.WithArray(
-			"kb_ids",
-			mcpgo.Description(`Optional knowledge base refs. Each element may be a bare id ("notes"), a "scope:id" string ("project:notes"), or an object {"scope":"project","id":"notes"}. Bare ids inherit the request scope.`),
-			mcpgo.Items(kbIDsItemSchema),
-		),
-		scopeProperty,
-		mcpgo.WithNumber("limit", mcpgo.Description("Maximum number of results."), mcpgo.DefaultNumber(10)),
-		mcpgo.WithString("search_mode", mcpgo.Description("Search mode."), mcpgo.Enum("auto", "lexical", "semantic", "hybrid"), mcpgo.DefaultString("auto")),
-		mcpgo.WithReadOnlyHintAnnotation(true),
-		mcpgo.WithDestructiveHintAnnotation(false),
-		mcpgo.WithIdempotentHintAnnotation(true),
-		mcpgo.WithOpenWorldHintAnnotation(false),
-	)
 	getTool := mcpgo.NewTool(
 		"get_knowledge_item",
-		mcpgo.WithDescription("Fetch the full content and metadata of a single knowledge item by KB id + item id. Use after search_knowledge or list_knowledge_items surfaces a promising hit and you need the complete text — to answer a user's question accurately, cite in a technical design/spec, or apply to code. Cheap and read-only; prefer fetching full content over deciding from a snippet alone."),
+		mcpgo.WithDescription("Fetch the full content and metadata of a single knowledge item by KB id + item id. Use after list_knowledge_items or list_knowledge_bases surfaces a promising hit and you need the complete text — to answer a user's question accurately, cite in a technical design/spec, or apply to code. Cheap and read-only; prefer fetching full content over deciding from a title alone."),
 		scopeProperty,
 		mcpgo.WithString("kb_id", mcpgo.Required(), mcpgo.Description("Knowledge base ID.")),
 		mcpgo.WithString("item_id", mcpgo.Required(), mcpgo.Description("Knowledge item ID.")),
@@ -250,7 +188,7 @@ func (s *Server) registerTools() {
 	)
 	listItemsTool := mcpgo.NewTool(
 		"list_knowledge_items",
-		mcpgo.WithDescription("Browse a knowledge base as a lightweight directory (id/title/tags, no content). Use when: (1) the user asks 'what is in KB X', (2) search_knowledge returned nothing but the KB is plausibly relevant, or (3) you need to scan a small KB exhaustively before answering a question, drafting a technical plan, or writing code. After spotting a promising id, call get_knowledge_item for the full content. Prefer search_knowledge for keyword/semantic lookup; this is for browsing."),
+		mcpgo.WithDescription("Browse a knowledge base as a lightweight directory (id/title/tags, no content). Use when: (1) the user asks 'what is in KB X', (2) you need to scan a KB exhaustively before answering a question, drafting a technical plan, or writing code. After spotting a promising id, call get_knowledge_item for the full content."),
 		scopeProperty,
 		mcpgo.WithString("kb_id", mcpgo.Required(), mcpgo.Description("Knowledge base ID.")),
 		mcpgo.WithNumber("limit", mcpgo.Description("Maximum number of items to return. 0 means all.")),
@@ -287,7 +225,7 @@ func (s *Server) registerTools() {
 	)
 	listTool := mcpgo.NewTool(
 		"list_knowledge_bases",
-		mcpgo.WithDescription("List all configured knowledge bases AND every item id/title/tags. CALL EARLY at the start of any non-trivial task, OR whenever search_knowledge hits are weak — title/tag scans surface entries that keyword/semantic search misses. Cheap, read-only; one upfront call beats guessing kb_ids. Use get_knowledge_item for full content."),
+		mcpgo.WithDescription("List all configured knowledge bases AND every item id/title/tags. CALL EARLY at the start of any non-trivial task — title/tag scans surface entries that might otherwise be missed. Cheap, read-only; one upfront call beats guessing kb_ids. Use get_knowledge_item for full content."),
 		mcpgo.WithReadOnlyHintAnnotation(true),
 		mcpgo.WithDestructiveHintAnnotation(false),
 		mcpgo.WithIdempotentHintAnnotation(true),
@@ -331,8 +269,7 @@ func (s *Server) registerTools() {
 		mcpgo.WithOpenWorldHintAnnotation(false),
 	)
 
-	s.tools = []mcpgo.Tool{searchTool, getTool, listItemsTool, addTool, deleteTool, listTool, createKBTool, deleteKBTool, indexTool}
-	s.server.AddTool(searchTool, s.handleSearchKnowledge)
+	s.tools = []mcpgo.Tool{getTool, listItemsTool, addTool, deleteTool, listTool, createKBTool, deleteKBTool, indexTool}
 	s.server.AddTool(getTool, s.handleGetKnowledgeItem)
 	s.server.AddTool(listItemsTool, s.handleListKnowledgeItems)
 	s.server.AddTool(addTool, s.handleAddKnowledgeItem)
@@ -341,53 +278,6 @@ func (s *Server) registerTools() {
 	s.server.AddTool(createKBTool, s.handleCreateKnowledgeBase)
 	s.server.AddTool(deleteKBTool, s.handleDeleteKnowledgeBase)
 	s.server.AddTool(indexTool, s.handleIndexKnowledge)
-}
-
-func (s *Server) handleSearchKnowledge(ctx context.Context, request mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-	if s.svc == nil {
-		return mcpgo.NewToolResultError("service is not configured"), nil
-	}
-	var input searchKnowledgeInput
-	if err := request.BindArguments(&input); err != nil {
-		return mcpgo.NewToolResultErrorFromErr("invalid arguments", err), nil
-	}
-	limit := input.Limit
-	if limit == 0 {
-		limit = 10
-	}
-	defaultScope, err := s.defaultScope(input.Scope)
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	refs, err := parseSearchKBIDs(input.KBIDs, defaultScope)
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	result, err := s.svc.Search(ctx, core.SearchOptions{Query: input.Query, KBIDs: refs, Limit: limit, SearchMode: input.SearchMode})
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	return mcpgo.NewToolResultStructuredOnly(toSearchKnowledgeResult(result)), nil
-}
-
-func toSearchKnowledgeResult(result service.SearchResult) searchKnowledgeResult {
-	hits := make([]searchKnowledgeHit, 0, len(result.Hits))
-	for _, hit := range result.Hits {
-		hits = append(hits, searchKnowledgeHit{
-			ItemID:        hit.ItemID,
-			KBID:          hit.KBID,
-			Scope:         hit.Scope,
-			ItemType:      hit.ItemType,
-			Title:         hit.Title,
-			Snippet:       hit.Snippet,
-			Score:         hit.Score,
-			MatchMode:     hit.MatchMode,
-			SourceBackend: hit.SourceBackend,
-			Locator:       hit.Locator,
-			Metadata:      hit.Metadata,
-		})
-	}
-	return searchKnowledgeResult{Hits: hits, Warnings: result.Warnings}
 }
 
 func (s *Server) handleGetKnowledgeItem(ctx context.Context, request mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
@@ -662,60 +552,4 @@ func (s *Server) defaultScope(raw string) (string, error) {
 		return core.ScopeGlobal, nil
 	}
 	return core.NormalizeScope(raw)
-}
-
-// parseSearchKBIDs accepts each kb_ids element as either:
-//   - a JSON object {"scope":"project","id":"notes"}
-//   - a JSON string "scope:id" (e.g. "project:notes") — scope optional
-//
-// Empty/whitespace strings are skipped. Bare strings without ":" use defaultScope.
-func parseSearchKBIDs(raws []json.RawMessage, defaultScope string) ([]core.ScopedKBRef, error) {
-	out := make([]core.ScopedKBRef, 0, len(raws))
-	for _, raw := range raws {
-		var asString string
-		if err := json.Unmarshal(raw, &asString); err == nil {
-			id := strings.TrimSpace(asString)
-			if id == "" {
-				continue
-			}
-			if strings.Contains(id, ":") {
-				parts := strings.SplitN(id, ":", 2)
-				scope, err := core.NormalizeScope(parts[0])
-				if err != nil {
-					return nil, fmt.Errorf("kb_ids %q: %w", id, err)
-				}
-				idPart := strings.TrimSpace(parts[1])
-				if idPart == "" {
-					return nil, fmt.Errorf("kb_ids %q: id is empty", id)
-				}
-				out = append(out, core.ScopedKBRef{Scope: scope, ID: idPart})
-				continue
-			}
-			out = append(out, core.ScopedKBRef{Scope: defaultScope, ID: id})
-			continue
-		}
-		var asObj struct {
-			Scope string `json:"scope"`
-			ID    string `json:"id"`
-		}
-		if err := json.Unmarshal(raw, &asObj); err != nil {
-			return nil, fmt.Errorf("kb_ids element must be string or object: %w", err)
-		}
-		id := strings.TrimSpace(asObj.ID)
-		if id == "" {
-			continue
-		}
-		scope := strings.TrimSpace(asObj.Scope)
-		if scope == "" {
-			scope = defaultScope
-		} else {
-			normalized, err := core.NormalizeScope(scope)
-			if err != nil {
-				return nil, fmt.Errorf("kb_ids[%s]: %w", id, err)
-			}
-			scope = normalized
-		}
-		out = append(out, core.ScopedKBRef{Scope: scope, ID: id})
-	}
-	return out, nil
 }

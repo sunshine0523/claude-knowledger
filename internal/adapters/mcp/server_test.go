@@ -55,25 +55,13 @@ func (b *indexToolBackend) MaintainIndex(_ context.Context, _ core.KnowledgeBase
 func TestNewServerRegistersKnowledgeToolsInOrder(t *testing.T) {
 	server := mcpadapter.NewServer(nil)
 	tools := server.Tools()
-	want := []string{"search_knowledge", "get_knowledge_item", "list_knowledge_items", "add_knowledge_item", "delete_knowledge_item", "list_knowledge_bases", "create_knowledge_base", "delete_knowledge_base", "index_knowledge"}
+	want := []string{"get_knowledge_item", "list_knowledge_items", "add_knowledge_item", "delete_knowledge_item", "list_knowledge_bases", "create_knowledge_base", "delete_knowledge_base", "index_knowledge"}
 	if len(tools) != len(want) {
 		t.Fatalf("expected %d tools, got %d", len(want), len(tools))
 	}
 	for i, name := range want {
 		if tools[i].Name != name {
 			t.Fatalf("tool %d: expected %q, got %q", i, name, tools[i].Name)
-		}
-	}
-}
-
-func TestSearchKnowledgeSchema(t *testing.T) {
-	tool := findTool(t, mcpadapter.NewServer(nil).Tools(), "search_knowledge")
-	if !hasRequired(tool, "query") {
-		t.Fatalf("expected search_knowledge to require query")
-	}
-	for _, prop := range []string{"kb_ids", "limit", "search_mode"} {
-		if _, ok := tool.InputSchema.Properties[prop]; !ok {
-			t.Fatalf("expected search_knowledge schema to have %q property", prop)
 		}
 	}
 }
@@ -220,32 +208,6 @@ func TestMCPHandlersRoundTripThroughService(t *testing.T) {
 		t.Fatalf("expected add_knowledge_item success, got %q", firstTextContent(t, addResult.Content))
 	}
 	itemID := extractItemID(t, addResult.Content)
-
-	searchRequest := mcp.CallToolRequest{}
-	searchRequest.Params.Name = "search_knowledge"
-	searchRequest.Params.Arguments = map[string]any{
-		"query":       "stdio",
-		"kb_ids":      []string{"docs"},
-		"limit":       5,
-		"search_mode": "lexical",
-	}
-	searchResult, err := client.CallTool(ctx, searchRequest)
-	if err != nil {
-		t.Fatalf("call search_knowledge: %v", err)
-	}
-	if searchResult.IsError {
-		t.Fatalf("expected search_knowledge success, got %q", firstTextContent(t, searchResult.Content))
-	}
-	searchText := firstTextContent(t, searchResult.Content)
-	if !strings.Contains(searchText, "MCP Notes") {
-		t.Fatalf("expected search text to contain MCP Notes, got %q", searchText)
-	}
-	if !strings.Contains(searchText, "Snippet") {
-		t.Fatalf("expected search text to include Snippet, got %q", searchText)
-	}
-	if strings.Contains(searchText, "ContentPreview") {
-		t.Fatalf("expected search text to omit ContentPreview, got %q", searchText)
-	}
 
 	getRequest := mcp.CallToolRequest{}
 	getRequest.Params.Name = "get_knowledge_item"
@@ -440,28 +402,6 @@ func extractItemID(t *testing.T, content []mcp.Content) string {
 
 // --- scope-aware coverage ---
 
-func TestSearchKnowledgeSchemaIncludesScopeAndKBIDsItems(t *testing.T) {
-	tool := findTool(t, mcpadapter.NewServer(nil).Tools(), "search_knowledge")
-	if _, ok := tool.InputSchema.Properties["scope"]; !ok {
-		t.Fatalf("expected search_knowledge schema to expose scope")
-	}
-	kbIDs, ok := tool.InputSchema.Properties["kb_ids"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected kb_ids property to be an object schema, got %T", tool.InputSchema.Properties["kb_ids"])
-	}
-	items, ok := kbIDs["items"]
-	if !ok {
-		t.Fatalf("expected kb_ids schema to declare items")
-	}
-	itemsBytes, err := json.Marshal(items)
-	if err != nil {
-		t.Fatalf("marshal items schema: %v", err)
-	}
-	if !strings.Contains(string(itemsBytes), "oneOf") {
-		t.Fatalf("expected kb_ids items to declare oneOf, got %s", itemsBytes)
-	}
-}
-
 func TestGetAddIndexSchemasIncludeOptionalScope(t *testing.T) {
 	tools := mcpadapter.NewServer(nil).Tools()
 	for _, name := range []string{"get_knowledge_item", "add_knowledge_item", "delete_knowledge_item", "index_knowledge"} {
@@ -540,60 +480,57 @@ func TestMCPProjectScopeDefaultsThroughService(t *testing.T) {
 		t.Fatalf("add error: %s", firstTextContent(t, addResult.Content))
 	}
 
-	// search with bare kb_id "notes" should hit project scope only
-	searchRequest := mcp.CallToolRequest{}
-	searchRequest.Params.Name = "search_knowledge"
-	searchRequest.Params.Arguments = map[string]any{
-		"query":       "Belongs",
-		"kb_ids":      []any{"notes"},
-		"search_mode": "lexical",
+	// list_knowledge_items with bare kb_id "notes" defaults to project scope
+	listItemsReq := mcp.CallToolRequest{}
+	listItemsReq.Params.Name = "list_knowledge_items"
+	listItemsReq.Params.Arguments = map[string]any{
+		"kb_id": "notes",
 	}
-	searchResult, err := client.CallTool(ctx, searchRequest)
+	listRes, err := client.CallTool(ctx, listItemsReq)
 	if err != nil {
-		t.Fatalf("search: %v", err)
+		t.Fatalf("list_knowledge_items: %v", err)
 	}
-	if searchResult.IsError {
-		t.Fatalf("search error: %s", firstTextContent(t, searchResult.Content))
+	if listRes.IsError {
+		t.Fatalf("list_knowledge_items error: %s", firstTextContent(t, listRes.Content))
 	}
-	structured, ok := searchResult.StructuredContent.(map[string]any)
+	structured, ok := listRes.StructuredContent.(map[string]any)
 	if !ok {
-		t.Fatalf("expected structured search result, got %T", searchResult.StructuredContent)
+		t.Fatalf("expected structured list result, got %T", listRes.StructuredContent)
 	}
-	hits, ok := structured["Hits"].([]any)
+	items, ok := structured["items"].([]any)
 	if !ok {
-		t.Fatalf("expected Hits slice, got %T", structured["Hits"])
+		t.Fatalf("expected items slice, got %T", structured["items"])
 	}
-	if len(hits) != 1 {
-		t.Fatalf("expected exactly 1 hit (project scope only), got %d", len(hits))
+	if len(items) != 1 {
+		t.Fatalf("expected exactly 1 item (project scope), got %d", len(items))
 	}
-	hit, _ := hits[0].(map[string]any)
-	if hit["Scope"] != core.ScopeProject {
-		t.Fatalf("expected hit scope=project, got %v", hit["Scope"])
+	item, _ := items[0].(map[string]any)
+	if item["scope"] != core.ScopeProject {
+		t.Fatalf("expected item scope=project, got %v", item["scope"])
 	}
-	if hit["KBID"] != "notes" {
-		t.Fatalf("expected hit kb=notes, got %v", hit["KBID"])
+	if item["kb_id"] != "notes" {
+		t.Fatalf("expected item kb=notes, got %v", item["kb_id"])
 	}
 
-	// search with scope:id syntax also works
-	searchRequest.Params.Arguments = map[string]any{
-		"query":       "Belongs",
-		"kb_ids":      []any{"project:notes"},
-		"search_mode": "lexical",
+	// list_knowledge_items with explicit scope=global should find no items
+	listItemsReq.Params.Arguments = map[string]any{
+		"kb_id": "notes",
+		"scope": "global",
 	}
-	res2, err := client.CallTool(ctx, searchRequest)
-	if err != nil || res2.IsError {
-		t.Fatalf("search scope:id: err=%v isError=%v body=%s", err, res2 != nil && res2.IsError, firstTextContent(t, res2.Content))
+	globalRes, err := client.CallTool(ctx, listItemsReq)
+	if err != nil || globalRes.IsError {
+		t.Fatalf("list_knowledge_items global: err=%v isError=%v body=%s", err, globalRes != nil && globalRes.IsError, firstTextContent(t, globalRes.Content))
 	}
-
-	// search with object kb_ids form
-	searchRequest.Params.Arguments = map[string]any{
-		"query":       "Belongs",
-		"kb_ids":      []any{map[string]any{"scope": "project", "id": "notes"}},
-		"search_mode": "lexical",
+	globalStructured, ok := globalRes.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("expected structured global list result, got %T", globalRes.StructuredContent)
 	}
-	res3, err := client.CallTool(ctx, searchRequest)
-	if err != nil || res3.IsError {
-		t.Fatalf("search object: err=%v isError=%v body=%s", err, res3 != nil && res3.IsError, firstTextContent(t, res3.Content))
+	globalItems, ok := globalStructured["items"].([]any)
+	if !ok {
+		t.Fatalf("expected global items slice, got %T", globalStructured["items"])
+	}
+	if len(globalItems) != 0 {
+		t.Fatalf("expected 0 items in global scope, got %d", len(globalItems))
 	}
 }
 

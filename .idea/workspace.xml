@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="ALL" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="cfe9b284-60ff-4220-a7ff-cdf9c354a1ff" name="更改" comment="feat(hooks): replace precheck.json with precheck script for improved context handling">
+      <change beforePath="$PROJECT_DIR$/.idea/knowledger.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/knowledger.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/knowledger/registry/filestore.py" beforeDir="false" afterPath="$PROJECT_DIR$/knowledger/registry/filestore.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/knowledger/registry/registry.py" beforeDir="false" afterPath="$PROJECT_DIR$/knowledger/registry/registry.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/knowledger/registry/store.py" beforeDir="false" afterPath="$PROJECT_DIR$/knowledger/registry/store.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/pyproject.toml" beforeDir="false" afterPath="$PROJECT_DIR$/pyproject.toml" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="NextEditCompletionFeaturesState">
+    <decayedCancelled>
+      <entry key="MS100" value="1.5515706678225987" />
+      <entry key="MS500" value="3.470208516185822" />
+      <entry key="S2" value="6.474398174345235" />
+      <entry key="S5" value="7.82363667798235" />
+      <entry key="S10" value="8.39169955450556" />
+      <entry key="S30" value="9.731344225301156" />
+      <entry key="S60" value="11.78122311158595" />
+      <entry key="M2" value="14.031252047451183" />
+      <entry key="M5" value="16.136016877341426" />
+      <entry key="M10" value="17.014362053282262" />
+      <entry key="M15" value="17.330350176922657" />
+      <entry key="M30" value="17.658728868327298" />
+      <entry key="H1" value="17.8277207096625" />
+      <entry key="H2" value="17.91344533069351" />
+      <entry key="H4" value="17.95661839312618" />
+      <entry key="D1" value="17.99275520590909" />
+      <entry key="W1" value="17.998964673094452" />
+    </decayedCancelled>
+    <decayedSelected>
+      <entry key="MS100" value="0.0" />
+      <entry key="MS500" value="0.0" />
+      <entry key="S2" value="0.0" />
+      <entry key="S5" value="0.0" />
+      <entry key="S10" value="0.0" />
+      <entry key="S30" value="0.0" />
+      <entry key="S60" value="0.0" />
+      <entry key="M2" value="0.0" />
+      <entry key="M5" value="0.0" />
+      <entry key="M10" value="0.0" />
+      <entry key="M15" value="0.0" />
+      <entry key="M30" value="0.0" />
+      <entry key="H1" value="0.0" />
+      <entry key="H2" value="0.0" />
+      <entry key="H4" value="0.0" />
+      <entry key="D1" value="0.0" />
+      <entry key="W1" value="0.0" />
+    </decayedSelected>
+    <decayedShown>
+      <entry key="MS100" value="1.4778476116929165" />
+      <entry key="MS500" value="3.428874182186639" />
+      <entry key="S2" value="6.4484990327408624" />
+      <entry key="S5" value="7.810308786235501" />
+      <entry key="S10" value="8.384219576523128" />
+      <entry key="S30" value="9.72218309531053" />
+      <entry key="S60" value="11.768652323177008" />
+      <entry key="M2" value="14.02002350096734" />
+      <entry key="M5" value="16.129554563600912" />
+      <entry key="M10" value="17.010706635579872" />
+      <entry key="M15" value="17.327810392997883" />
+      <entry key="M30" value="17.657405253054684" />
+      <entry key="H1" value="17.82704502282904" />
+      <entry key="H2" value="17.91310395995211" />
+      <entry key="H4" value="17.956446818639208" />
+      <entry key="D1" value="17.992726486050117" />
+      <entry key="W1" value="17.998960567209853" />
+    </decayedShown>
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 1,
+  &quot;fromUser&quot;: false
+}</component>
+  <component name="ProjectId" id="3FaQNvRvNQ1UekE1whyewOsdi4n" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;Python.main.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
+    &quot;codeWithMe.voiceChat.enabledByDefault&quot;: &quot;false&quot;,
+    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;python-port&quot;,
+    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;/run/media/kindbrave/Data/code/ai/knowledger&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable&quot;,
+    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
+  }
+}</component>
+  <component name="RunManager">
+    <configuration name="main" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="knowledger" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/knowledger" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="DEBUG_JUST_MY_CODE" value="false" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="RUN_TOOL" value="" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/knowledger/main.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <recent_temporary>
+      <list>
+        <item itemvalue="Python.main" />
+      </list>
+    </recent_temporary>
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-python-sdk-245168a56dbd-c2ffad84badb-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-261.25134.203" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="默认任务">
+      <changelist id="cfe9b284-60ff-4220-a7ff-cdf9c354a1ff" name="更改" comment="" />
+      <created>1782310663209</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1782310663209</updated>
+      <workItem from="1782310664479" duration="4393000" />
+      <workItem from="1782349071920" duration="769000" />
+    </task>
+    <task id="LOCAL-00001" summary="feat(hooks): replace precheck.json with precheck script for improved context handling">
+      <option name="closed" value="true" />
+      <created>1782310700188</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1782310700189</updated>
+    </task>
+    <task id="LOCAL-00002" summary="feat(hooks): replace precheck.json with precheck script for improved context handling">
+      <option name="closed" value="true" />
+      <created>1782310705774</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1782310705774</updated>
+    </task>
+    <option name="localTasksCounter" value="3" />
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="feat(hooks): replace precheck.json with precheck script for improved context handling" />
+    <option name="LAST_COMMIT_MESSAGE" value="feat(hooks): replace precheck.json with precheck script for improved context handling" />
+  </component>
+  <component name="com.intellij.coverage.CoverageDataManagerImpl">
+    <SUITE FILE_PATH="coverage/knowledger$main.coverage" NAME="main 覆盖结果" MODIFIED="1782349882991" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/knowledger" />
+  </component>
+</project>

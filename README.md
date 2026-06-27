@@ -136,7 +136,7 @@ With an explicit config file:
 }
 ```
 
-The MCP server exposes `search_knowledge`, `get_knowledge_item`, `add_knowledge_item`, and `list_knowledge_bases`.
+The MCP server exposes `get_knowledge_item`, `add_knowledge_item`, and `list_knowledge_bases`.
 
 ## Configuration
 

@@ -71,7 +71,6 @@ If `knowledger` is not on `PATH`, install it or start Claude Code from a shell w
 
 The MCP server exposes:
 
-- `search_knowledge`
 - `get_knowledge_item`
 - `add_knowledge_item`
 - `list_knowledge_bases`

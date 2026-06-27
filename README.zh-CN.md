@@ -136,7 +136,7 @@ MCP client 配置示例：
 }
 ```
 
-MCP server 暴露 `search_knowledge`、`get_knowledge_item`、`add_knowledge_item` 和 `list_knowledge_bases`。
+MCP server 暴露 `get_knowledge_item`、`add_knowledge_item` 和 `list_knowledge_bases`。
 
 ## 配置
 
