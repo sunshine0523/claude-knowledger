@@ -28,8 +28,11 @@ var bundleFiles = []string{
 	".mcp.json",
 	"README.md",
 	"skills/knowledger/SKILL.md",
+	"skills/git-knowledge/SKILL.md",
+	"skills/update-knowledger/SKILL.md",
 	"hooks/hooks.json",
 	"hooks/precheck",
+	"hooks/git-sync",
 }
 
 type CommandRunner interface {

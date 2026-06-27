@@ -110,6 +110,11 @@ func TestInstallFreshInstallRegistersMCPMarketplaceAndPlugin(t *testing.T) {
 	assertFileExists(t, filepath.Join(marketplacePath, ".mcp.json"))
 	assertFileExists(t, filepath.Join(marketplacePath, "README.md"))
 	assertFileExists(t, filepath.Join(marketplacePath, "skills", "knowledger", "SKILL.md"))
+	assertFileExists(t, filepath.Join(marketplacePath, "skills", "git-knowledge", "SKILL.md"))
+	assertFileExists(t, filepath.Join(marketplacePath, "skills", "update-knowledger", "SKILL.md"))
+	assertFileExists(t, filepath.Join(marketplacePath, "hooks", "hooks.json"))
+	assertFileExists(t, filepath.Join(marketplacePath, "hooks", "precheck"))
+	assertFileExists(t, filepath.Join(marketplacePath, "hooks", "git-sync"))
 
 	stdout := out.String()
 	for _, want := range []string{
@@ -192,6 +197,8 @@ func TestInstallFreshInstallMaterializesMarketplaceDirectoriesWith0755Permission
 		filepath.Join(marketplacePath, ".claude-plugin"),
 		filepath.Join(marketplacePath, "skills"),
 		filepath.Join(marketplacePath, "skills", "knowledger"),
+		filepath.Join(marketplacePath, "skills", "git-knowledge"),
+		filepath.Join(marketplacePath, "skills", "update-knowledger"),
 		filepath.Join(marketplacePath, "hooks"),
 	} {
 		assertDirMode(t, dir, 0o755)
@@ -203,10 +210,18 @@ func TestInstallFreshInstallMaterializesMarketplaceDirectoriesWith0755Permission
 		filepath.Join(marketplacePath, ".mcp.json"),
 		filepath.Join(marketplacePath, "README.md"),
 		filepath.Join(marketplacePath, "skills", "knowledger", "SKILL.md"),
+		filepath.Join(marketplacePath, "skills", "git-knowledge", "SKILL.md"),
+		filepath.Join(marketplacePath, "skills", "update-knowledger", "SKILL.md"),
 		filepath.Join(marketplacePath, "hooks", "hooks.json"),
-		filepath.Join(marketplacePath, "hooks", "precheck"),
 	} {
 		assertFileMode(t, file, 0o644)
+	}
+
+	for _, file := range []string{
+		filepath.Join(marketplacePath, "hooks", "precheck"),
+		filepath.Join(marketplacePath, "hooks", "git-sync"),
+	} {
+		assertFileMode(t, file, 0o755)
 	}
 }
 
