@@ -22,24 +22,26 @@ Knowledger is a local-first knowledge aggregation tool for agents. It provides a
 
 ## Installation
 
-Build from source:
+**macOS / Linux** — one-liner:
 
 ```bash
-git clone https://github.com/kindbrave/knowledger.git
-cd knowledger
+curl -fsSL https://raw.githubusercontent.com/kindbrave/claude-knowledger/main/install.sh | sh
+```
+
+**Windows** (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/kindbrave/claude-knowledger/main/install.ps1 | iex
+```
+
+The script detects your OS and architecture, downloads the correct binary from the [latest release](https://github.com/kindbrave/claude-knowledger/releases/latest), and installs it to `/usr/local/bin` (or `~/.local/bin` if `/usr/local/bin` is not writable).
+
+**Build from source** (requires Go 1.24+ with CGO):
+
+```bash
+git clone https://github.com/kindbrave/claude-knowledger.git
+cd claude-knowledger
 go build -o knowledger ./cmd/knowledger
-```
-
-Run without installing:
-
-```bash
-go run ./cmd/knowledger list-kbs
-```
-
-Install the CLI:
-
-```bash
-go install github.com/kindbrave/knowledger/cmd/knowledger@latest
 ```
 
 ## Quick Start
