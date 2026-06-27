@@ -14,6 +14,7 @@ import (
 	"github.com/kindbrave/knowledger/internal/indexing/chunking"
 	"github.com/kindbrave/knowledger/internal/indexing/semantic"
 	"github.com/kindbrave/knowledger/internal/install/claude"
+	"github.com/kindbrave/knowledger/internal/install/opencode"
 	"github.com/kindbrave/knowledger/internal/projectroot"
 	"github.com/kindbrave/knowledger/internal/registry"
 	"github.com/kindbrave/knowledger/internal/service"
@@ -22,6 +23,7 @@ import (
 type MCPRunner func(*service.Service) error
 
 type ClaudeInstallRunner func(out, errOut io.Writer) error
+type OpenCodeInstallRunner func(out, errOut io.Writer) error
 
 var runMCPServer MCPRunner = func(svc *service.Service) error {
 	return mcpadapter.NewServer(svc).ServeStdio()
@@ -29,6 +31,10 @@ var runMCPServer MCPRunner = func(svc *service.Service) error {
 
 var runClaudeInstall ClaudeInstallRunner = func(out, errOut io.Writer) error {
 	return claude.NewInstaller().Install(out, errOut)
+}
+
+var runOpenCodeInstall OpenCodeInstallRunner = func(out, errOut io.Writer) error {
+	return opencode.NewInstaller().Install(out, errOut)
 }
 
 func SetMCPRunnerForTest(runner MCPRunner) func() {
@@ -41,6 +47,12 @@ func SetClaudeInstallRunnerForTest(runner ClaudeInstallRunner) func() {
 	previous := runClaudeInstall
 	runClaudeInstall = runner
 	return func() { runClaudeInstall = previous }
+}
+
+func SetOpenCodeInstallRunnerForTest(runner OpenCodeInstallRunner) func() {
+	previous := runOpenCodeInstall
+	runOpenCodeInstall = runner
+	return func() { runOpenCodeInstall = previous }
 }
 
 func Run(configPath string, args []string) error {
@@ -133,6 +145,8 @@ func runService(svc *service.Service, address string, args []string) error {
 		return runMCPServer(svc)
 	}, func(out, errOut io.Writer) error {
 		return runClaudeInstall(out, errOut)
+	}, func(out, errOut io.Writer) error {
+		return runOpenCodeInstall(out, errOut)
 	})
 	cmd.SetArgs(args)
 	return cmd.Execute()

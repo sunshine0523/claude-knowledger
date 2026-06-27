@@ -190,6 +190,40 @@ func TestRunDefaultInstallClaudeInvokesInstallRunner(t *testing.T) {
 	}
 }
 
+func TestRunDefaultInstallOpenCodeInvokesInstallRunner(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	called := 0
+	restore := app.SetOpenCodeInstallRunnerForTest(func(out, errOut io.Writer) error {
+		called++
+		return nil
+	})
+	defer restore()
+
+	if err := app.RunDefault([]string{"install", "--opencode"}); err != nil {
+		t.Fatalf("RunDefault returned error: %v", err)
+	}
+	if called != 1 {
+		t.Fatalf("expected install runner to be called once, got %d", called)
+	}
+}
+
+func TestRunInstallOpenCodeDoesNotLoadConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	called := 0
+	restore := app.SetOpenCodeInstallRunnerForTest(func(out, errOut io.Writer) error {
+		called++
+		return nil
+	})
+	defer restore()
+
+	if err := app.Run("/path/that/does/not/exist.yaml", []string{"install", "--opencode"}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if called != 1 {
+		t.Fatalf("expected install runner to be called once, got %d", called)
+	}
+}
+
 func TestRunInstallClaudeDoesNotLoadConfig(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	called := 0

@@ -17,10 +17,10 @@ func NewRootCommandWithAddress(svc *service.Service, address string) *cobra.Comm
 }
 
 func NewRootCommandWithAddressAndMCPRunner(svc *service.Service, address string, runMCP MCPRunner) *cobra.Command {
-	return NewRootCommandWithAddressAndRunners(svc, address, runMCP, func(out, errOut io.Writer) error { return nil })
+	return NewRootCommandWithAddressAndRunners(svc, address, runMCP, func(out, errOut io.Writer) error { return nil }, func(out, errOut io.Writer) error { return nil })
 }
 
-func NewRootCommandWithAddressAndRunners(svc *service.Service, address string, runMCP MCPRunner, runClaudeInstall ClaudeInstallRunner) *cobra.Command {
+func NewRootCommandWithAddressAndRunners(svc *service.Service, address string, runMCP MCPRunner, runClaudeInstall ClaudeInstallRunner, runOpenCodeInstall OpenCodeInstallRunner) *cobra.Command {
 	cmd := &cobra.Command{Use: "knowledger"}
 	cmd.PersistentFlags().StringVar(&scopeFlag, "scope", "", "knowledge base scope: project, global. Defaults to project when running in a project directory, else global.")
 	cmd.AddCommand(newSearchCommand(svc))
@@ -34,6 +34,6 @@ func NewRootCommandWithAddressAndRunners(svc *service.Service, address string, r
 	cmd.AddCommand(newDeleteKBCommand(svc))
 	cmd.AddCommand(newServeCommand(svc, address))
 	cmd.AddCommand(newMCPCommand(runMCP))
-	cmd.AddCommand(newInstallCommand(runClaudeInstall))
+	cmd.AddCommand(newInstallCommand(runClaudeInstall, runOpenCodeInstall))
 	return cmd
 }

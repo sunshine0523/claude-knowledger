@@ -350,7 +350,8 @@ func isMissingMCP(result CommandResult, err error) bool {
 		strings.Contains(text, "no such") ||
 		strings.Contains(text, "does not exist") ||
 		strings.Contains(text, "missing") ||
-		strings.Contains(text, "no mcp server found")
+		strings.Contains(text, "no mcp server found") ||
+		strings.Contains(text, "no mcp server named")
 }
 
 func containsExactField(output, want string) bool {
