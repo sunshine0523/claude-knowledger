@@ -56,7 +56,7 @@ Knowledger can run without `knowledger.yaml`. If no config file is present, it c
 Add a knowledge item:
 
 ```bash
-go run ./cmd/knowledger add \
+knowledger add \
   --kb default \
   --title "SQLite notes" \
   --content "Knowledger stores local knowledge in SQLite."
@@ -65,19 +65,19 @@ go run ./cmd/knowledger add \
 Search knowledge:
 
 ```bash
-go run ./cmd/knowledger search --query SQLite --limit 10
+knowledger search --query SQLite --limit 10
 ```
 
 Get an item by ID:
 
 ```bash
-go run ./cmd/knowledger get --kb default --id 1
+knowledger get --kb default --id 1
 ```
 
 List knowledge bases:
 
 ```bash
-go run ./cmd/knowledger list-kbs
+knowledger list-kbs
 ```
 
 ## Web Dashboard
@@ -85,7 +85,7 @@ go run ./cmd/knowledger list-kbs
 Start the dashboard:
 
 ```bash
-go run ./cmd/knowledger serve
+knowledger serve
 ```
 
 Default address:
@@ -106,39 +106,11 @@ Runtime knowledge bases created from the Web dashboard are stored in `~/.knowled
 
 ## MCP Server
 
-Start Knowledger as a local MCP server over stdio:
-
 ```bash
-knowledger mcp
+knowledger install --claude
 ```
 
-Example MCP client configuration:
-
-```json
-{
-  "mcpServers": {
-    "knowledger": {
-      "command": "/absolute/path/to/knowledger",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-With an explicit config file:
-
-```json
-{
-  "mcpServers": {
-    "knowledger": {
-      "command": "/absolute/path/to/knowledger",
-      "args": ["--config", "/absolute/path/to/knowledger.yaml", "mcp"]
-    }
-  }
-}
-```
-
-The MCP server exposes `get_knowledge_item`, `add_knowledge_item`, and `list_knowledge_bases`.
+This automatically configures Knowledger as an MCP server in your Claude Code.
 
 ## Configuration
 
@@ -151,7 +123,7 @@ cp knowledger.example.yaml knowledger.yaml
 Start with an explicit config file:
 
 ```bash
-go run ./cmd/knowledger --config knowledger.yaml serve
+knowledger --config knowledger.yaml serve
 ```
 
 Minimal SQLite config:
@@ -207,7 +179,7 @@ Supported search modes:
 Example:
 
 ```bash
-go run ./cmd/knowledger search --query "agent memory" --search-mode hybrid --limit 5
+knowledger search --query "agent memory" --search-mode hybrid --limit 5
 ```
 
 If semantic search is unavailable at query time, supported paths fall back to lexical search with warnings.
