@@ -42,26 +42,31 @@ func newListItemsCommand(svc *service.Service) *cobra.Command {
 				}
 				return nil
 			}
-			// Format as text similar to MCP
+
+			// Print each item with detailed information
 			for i, item := range items {
 				if i > 0 {
-					fmt.Fprintln(cmd.OutOrStdout())
+					fmt.Fprintln(cmd.OutOrStdout(), strings.Repeat("-", 100))
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "- %s\t%s\n", item.ID, item.Title)
-				if item.Summary != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "  Summary: %s\n", item.Summary)
-				}
+
+				fmt.Fprintf(cmd.OutOrStdout(), "Item ID:  %s\n", item.ID)
+				fmt.Fprintf(cmd.OutOrStdout(), "Title:    %s\n", item.Title)
+
+				// Print metadata
 				if len(item.Metadata) > 0 {
-					fmt.Fprintln(cmd.OutOrStdout(), "  Metadata:")
+					fmt.Fprintln(cmd.OutOrStdout(), "Metadata:")
 					for k, v := range item.Metadata {
-						fmt.Fprintf(cmd.OutOrStdout(), "    %s: %v\n", k, v)
+						fmt.Fprintf(cmd.OutOrStdout(), "  - %s: %v\n", k, v)
 					}
+				} else {
+					fmt.Fprintln(cmd.OutOrStdout(), "Metadata: -")
 				}
-				if len(item.Tags) > 0 {
-					fmt.Fprintf(cmd.OutOrStdout(), "  Tags: [%s]\n", strings.Join(item.Tags, ", "))
-				}
-				if !item.UpdatedAt.IsZero() {
-					fmt.Fprintf(cmd.OutOrStdout(), "  Updated: %s\n", item.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"))
+
+				// Print summary
+				if item.Summary != "" {
+					fmt.Fprintf(cmd.OutOrStdout(), "Summary:  %s\n", item.Summary)
+				} else {
+					fmt.Fprintln(cmd.OutOrStdout(), "Summary:  -")
 				}
 			}
 			return nil

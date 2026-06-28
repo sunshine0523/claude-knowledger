@@ -480,34 +480,58 @@ func generateSummary(content string, maxLen int) string {
 		return ""
 	}
 
-	// Try to get first paragraph
-	paragraphs := strings.Split(content, "\n\n")
-	firstPara := strings.TrimSpace(paragraphs[0])
+	// Remove markdown formatting
+	// Remove HTML tags
+	content = regexp.MustCompile(`<[^>]+>`).ReplaceAllString(content, "")
+	// Remove headers (# ## ###)
+	content = regexp.MustCompile(`(?m)^#+\s+`).ReplaceAllString(content, "")
+	// Remove blockquotes (> )
+	content = regexp.MustCompile(`(?m)^>\s+`).ReplaceAllString(content, "")
+	// Remove code blocks ```...```
+	content = regexp.MustCompile(`(?s)` + "```" + `[^` + "`" + `]*` + "```").ReplaceAllString(content, "")
+	// Remove list markers (- * 1. 2.)
+	content = regexp.MustCompile(`(?m)^[\s]*[-*]\s+`).ReplaceAllString(content, "")
+	content = regexp.MustCompile(`(?m)^[\s]*\d+\.\s+`).ReplaceAllString(content, "")
+	// Remove footnotes [^footnote]
+	content = regexp.MustCompile(`\[\^[^\]]+\]`).ReplaceAllString(content, "")
+	// Remove links [text](url) -> text
+	content = regexp.MustCompile(`\[([^\]]+)\]\([^\)]+\)`).ReplaceAllString(content, "$1")
+	// Remove inline code `code` -> code
+	content = regexp.MustCompile("`+([^`]+)`+").ReplaceAllString(content, "$1")
+	// Remove bold/italic **text** or *text* -> text
+	content = regexp.MustCompile(`\*+([^\*]+)\*+`).ReplaceAllString(content, "$1")
+	// Remove images ![alt](url)
+	content = regexp.MustCompile(`!\[[^\]]*\]\([^\)]+\)`).ReplaceAllString(content, "")
+	// Remove extra whitespace and newlines
+	content = regexp.MustCompile(`\s+`).ReplaceAllString(content, " ")
+	content = strings.TrimSpace(content)
 
-	// Remove markdown headers
-	firstPara = regexp.MustCompile(`^#+\s+`).ReplaceAllString(firstPara, "")
-
-	// If first paragraph is too long, truncate at sentence boundary
-	if len(firstPara) > maxLen {
-		sentences := regexp.MustCompile(`[.!?]+\s+`).Split(firstPara, -1)
+	// If content is still too long, truncate at sentence boundary
+	if len(content) > maxLen {
+		// Try to find sentence boundaries (both English and Chinese)
+		sentences := regexp.MustCompile(`[。.!?]+\s*`).Split(content, -1)
 		summary := ""
 		for _, sentence := range sentences {
+			sentence = strings.TrimSpace(sentence)
+			if sentence == "" {
+				continue
+			}
 			if len(summary)+len(sentence) > maxLen {
 				break
 			}
 			if summary != "" {
-				summary += ". "
+				summary += "。"
 			}
-			summary += strings.TrimSpace(sentence)
+			summary += sentence
 		}
 		if summary != "" {
 			return summary + "..."
 		}
 		// Fallback: hard truncate
-		return firstPara[:maxLen] + "..."
+		return content[:maxLen] + "..."
 	}
 
-	return firstPara
+	return content
 }
 
 func safeItemPath(dir string, itemID string) (string, error) {
