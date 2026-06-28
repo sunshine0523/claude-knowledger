@@ -7,7 +7,7 @@ The plugin is intentionally thin. Knowledger's Go binary remains the source of t
 ## What It Provides
 
 - A Claude Code plugin manifest at `.claude-plugin/plugin.json`.
-- An MCP server configuration named `kl` (kept short so the resulting Claude Code tool names — `mcp__plugin_<plugin>_<mcp-server>__<tool>` — stay under Anthropic's 64-character limit; the binary is still invoked as `knowledger mcp`) that runs `knowledger mcp`.
+- An MCP server configuration named `knowledger` that runs `knowledger mcp`.
 - A `knowledger` skill that tells Claude when to search saved knowledge and when to propose durable capture.
 
 ## Prerequisites
@@ -54,13 +54,11 @@ claude plugin validate --strict ./plugins/knowledger
 
 ## MCP Configuration
 
-The plugin declares this MCP server (the key is intentionally short — `kl` — so
-that Claude Code's plugin-scoped tool names `mcp__plugin_knowledger_kl__<tool>`
-stay under Anthropic's 64-character name limit; the binary itself is still `knowledger`):
+The plugin declares this MCP server (the key matches the binary name, `knowledger`):
 
 ```json
 {
-  "kl": {
+  "knowledger": {
     "command": "knowledger",
     "args": ["mcp"]
   }
