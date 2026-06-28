@@ -43,31 +43,19 @@ func newListItemsCommand(svc *service.Service) *cobra.Command {
 				return nil
 			}
 
-			// Print each item with detailed information
-			for i, item := range items {
-				if i > 0 {
-					fmt.Fprintln(cmd.OutOrStdout(), strings.Repeat("-", 100))
-				}
+			// Print table header
+			fmt.Fprintln(cmd.OutOrStdout(), "Item-ID\tTitle\tMetadata\tSummary")
 
-				fmt.Fprintf(cmd.OutOrStdout(), "Item ID:  %s\n", item.ID)
-				fmt.Fprintf(cmd.OutOrStdout(), "Title:    %s\n", item.Title)
+			// Format as table rows
+			for _, item := range items {
+				// Format metadata as compact string
+				metadataStr := formatMetadataInline(item.Metadata)
 
-				// Print metadata
-				if len(item.Metadata) > 0 {
-					fmt.Fprintln(cmd.OutOrStdout(), "Metadata:")
-					for k, v := range item.Metadata {
-						fmt.Fprintf(cmd.OutOrStdout(), "  - %s: %v\n", k, v)
-					}
-				} else {
-					fmt.Fprintln(cmd.OutOrStdout(), "Metadata: -")
-				}
+				// Use summary as is (already cleaned)
+				summary := item.Summary
 
-				// Print summary
-				if item.Summary != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "Summary:  %s\n", item.Summary)
-				} else {
-					fmt.Fprintln(cmd.OutOrStdout(), "Summary:  -")
-				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n",
+					item.ID, item.Title, metadataStr, summary)
 			}
 			return nil
 		},
@@ -75,4 +63,16 @@ func newListItemsCommand(svc *service.Service) *cobra.Command {
 	cmd.Flags().StringVar(&kbID, "kb", "", "knowledge base id")
 	cmd.Flags().BoolVar(&titlesOnly, "titles-only", false, "print one \"id<TAB>title\" line per item")
 	return cmd
+}
+
+// formatMetadataInline converts metadata map to inline string representation
+func formatMetadataInline(metadata map[string]any) string {
+	if len(metadata) == 0 {
+		return "-"
+	}
+	var parts []string
+	for k, v := range metadata {
+		parts = append(parts, fmt.Sprintf("%s:%v", k, v))
+	}
+	return strings.Join(parts, "; ")
 }
