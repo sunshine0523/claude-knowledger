@@ -31,15 +31,10 @@ func newListKBsCommand(svc *service.Service) *cobra.Command {
 				kbs = filtered
 			}
 
-			// Print table header
-			fmt.Fprintln(cmd.OutOrStdout(), "KB-ID\tName\tScope\tStore-Type\tItem-Count")
-
-			// Print each KB as a row
-			for _, kb := range kbs {
-				items, err := svc.ListKnowledgeItems(context.Background(), kb.Scope, kb.ID)
-				itemCount := 0
-				if err == nil {
-					itemCount = len(items)
+			// For each KB, print header and then items table
+			for i, kb := range kbs {
+				if i > 0 {
+					fmt.Fprintln(cmd.OutOrStdout())
 				}
 
 				scope := kb.Scope
@@ -52,8 +47,33 @@ func newListKBsCommand(svc *service.Service) *cobra.Command {
 					name = kb.ID
 				}
 
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%d\n",
-					kb.ID, name, scope, kb.StoreType, itemCount)
+				// Print KB header
+				fmt.Fprintf(cmd.OutOrStdout(), "=== [%s:%s] %s (store=%s) ===\n",
+					scope, kb.ID, name, kb.StoreType)
+
+				// Get and print items
+				items, err := svc.ListKnowledgeItems(context.Background(), kb.Scope, kb.ID)
+				if err != nil {
+					fmt.Fprintf(cmd.OutOrStdout(), "Error listing items: %s\n", err.Error())
+					continue
+				}
+
+				if len(items) == 0 {
+					fmt.Fprintln(cmd.OutOrStdout(), "(empty)")
+					continue
+				}
+
+				// Print items table header
+				fmt.Fprintln(cmd.OutOrStdout(), "Item-ID\tTitle\tMetadata\tSummary")
+
+				// Print each item
+				for _, item := range items {
+					// Format metadata (use function from list_items.go)
+					metadataStr := formatMetadataInline(item.Metadata)
+
+					fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n",
+						item.ID, item.Title, metadataStr, item.Summary)
+				}
 			}
 			return nil
 		},
@@ -61,4 +81,3 @@ func newListKBsCommand(svc *service.Service) *cobra.Command {
 	cmd.Flags().StringVar(&scopeFilter, "scope-filter", "", "filter by scope: project, global, or all (default all)")
 	return cmd
 }
-

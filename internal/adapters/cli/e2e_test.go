@@ -80,19 +80,16 @@ func TestEndToEndProjectScopeViaCLI(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("list-kbs: %v", err)
 	}
-	// Now returns table format with header
+	// Now returns KB header followed by items table
 	outStr := out.String()
-	if !bytes.Contains(out.Bytes(), []byte("KB-ID")) {
-		t.Fatalf("expected 'KB-ID' header in list-kbs output, got: %s", outStr)
+	if !bytes.Contains(out.Bytes(), []byte("[project:notes]")) {
+		t.Fatalf("expected '[project:notes]' in list-kbs output, got: %s", outStr)
 	}
-	if !bytes.Contains(out.Bytes(), []byte("notes")) {
-		t.Fatalf("expected 'notes' KB in list-kbs output, got: %s", outStr)
+	if !bytes.Contains(out.Bytes(), []byte("store=text")) {
+		t.Fatalf("expected 'store=text' in list-kbs output, got: %s", outStr)
 	}
-	if !bytes.Contains(out.Bytes(), []byte("project")) {
-		t.Fatalf("expected 'project' scope in list-kbs output, got: %s", outStr)
-	}
-	if !bytes.Contains(out.Bytes(), []byte("text")) {
-		t.Fatalf("expected 'text' store type in list-kbs output, got: %s", outStr)
+	if !bytes.Contains(out.Bytes(), []byte("Item-ID")) {
+		t.Fatalf("expected 'Item-ID' header in list-kbs output, got: %s", outStr)
 	}
 
 	// search default = both scopes
