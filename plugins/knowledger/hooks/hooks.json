@@ -22,11 +22,9 @@
         ]
       }
     ],
-    "SkillInvoke": [
+    "PreToolUse": [
       {
-        "match": {
-          "skill": "superpowers:requesting-code-review"
-        },
+        "matcher": "Skill",
         "hooks": [
           {
             "type": "command",
