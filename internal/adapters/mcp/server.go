@@ -79,16 +79,17 @@ type listKnowledgeItemsInput struct {
 }
 
 // knowledgeItemSummary is the lean view returned by list_knowledge_items —
-// no Content/Metadata, so a large KB can be browsed cheaply as a directory.
+// no Content, so a large KB can be browsed cheaply as a directory.
 type knowledgeItemSummary struct {
-	ID        string   `json:"id"`
-	KBID      string   `json:"kb_id"`
-	Scope     string   `json:"scope"`
-	Type      string   `json:"type,omitempty"`
-	Title     string   `json:"title"`
-	Summary   string   `json:"summary,omitempty"`
-	Tags      []string `json:"tags,omitempty"`
-	UpdatedAt string   `json:"updated_at,omitempty"`
+	ID        string         `json:"id"`
+	KBID      string         `json:"kb_id"`
+	Scope     string         `json:"scope"`
+	Type      string         `json:"type,omitempty"`
+	Title     string         `json:"title"`
+	Summary   string         `json:"summary,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+	Tags      []string       `json:"tags,omitempty"`
+	UpdatedAt string         `json:"updated_at,omitempty"`
 }
 
 type listKnowledgeItemsResult struct {
@@ -362,29 +363,30 @@ func (s *Server) handleListKnowledgeItems(ctx context.Context, request mcpgo.Cal
 		end = offset + input.Limit
 	}
 	page := items[offset:end]
-	summaries := make([]knowledgeItemSummary, 0, len(page))
-	for _, item := range page {
-		updated := ""
-		if !item.UpdatedAt.IsZero() {
-			updated = item.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z")
+	var b strings.Builder
+	for i, item := range page {
+		if i > 0 {
+			b.WriteByte('\n')
 		}
-		summaries = append(summaries, knowledgeItemSummary{
-			ID:        item.ID,
-			KBID:      item.KBID,
-			Scope:     scope,
-			Type:      item.Type,
-			Title:     item.Title,
-			Summary:   item.Summary,
-			Tags:      item.Tags,
-			UpdatedAt: updated,
-		})
+		fmt.Fprintf(&b, "- %s\t%s", item.ID, item.Title)
+		if item.Summary != "" {
+			fmt.Fprintf(&b, "\n  Summary: %s", item.Summary)
+		}
+		if len(item.Metadata) > 0 {
+			b.WriteString("\n  Metadata:")
+			for k, v := range item.Metadata {
+				fmt.Fprintf(&b, "\n    %s: %v", k, v)
+			}
+		}
+		if len(item.Tags) > 0 {
+			fmt.Fprintf(&b, "\n  Tags: [%s]", strings.Join(item.Tags, ", "))
+		}
+		if !item.UpdatedAt.IsZero() {
+			fmt.Fprintf(&b, "\n  Updated: %s", item.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"))
+		}
 	}
-	return mcpgo.NewToolResultStructuredOnly(listKnowledgeItemsResult{
-		Items:  summaries,
-		Total:  total,
-		Offset: offset,
-		Limit:  input.Limit,
-	}), nil
+	footer := fmt.Sprintf("\n\nTotal: %d items, showing %d-%d", total, offset+1, offset+len(page))
+	return mcpgo.NewToolResultText(b.String() + footer), nil
 }
 
 func (s *Server) handleAddKnowledgeItem(ctx context.Context, request mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {

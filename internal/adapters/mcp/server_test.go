@@ -55,7 +55,7 @@ func (b *indexToolBackend) MaintainIndex(_ context.Context, _ core.KnowledgeBase
 func TestNewServerRegistersKnowledgeToolsInOrder(t *testing.T) {
 	server := mcpadapter.NewServer(nil)
 	tools := server.Tools()
-	want := []string{"get_knowledge_item", "list_knowledge_items", "add_knowledge_item", "delete_knowledge_item", "list_knowledge_bases", "create_knowledge_base", "delete_knowledge_base", "index_knowledge"}
+	want := []string{"get_knowledge_item", "list_knowledge_items", "add_knowledge_item", "delete_knowledge_item", "list_knowledge_bases", "create_knowledge_base", "delete_knowledge_base", "index_knowledge", "git_knowledge_add", "git_knowledge_pull", "git_knowledge_list"}
 	if len(tools) != len(want) {
 		t.Fatalf("expected %d tools, got %d", len(want), len(tools))
 	}
@@ -493,23 +493,14 @@ func TestMCPProjectScopeDefaultsThroughService(t *testing.T) {
 	if listRes.IsError {
 		t.Fatalf("list_knowledge_items error: %s", firstTextContent(t, listRes.Content))
 	}
-	structured, ok := listRes.StructuredContent.(map[string]any)
-	if !ok {
-		t.Fatalf("expected structured list result, got %T", listRes.StructuredContent)
+	// Now returns text format, check it contains expected content
+	textContent := firstTextContent(t, listRes.Content)
+	// Text backend uses file path as title, not the input title
+	if !strings.Contains(textContent, "Total: 1 items") {
+		t.Fatalf("expected 'Total: 1 items' in output, got: %s", textContent)
 	}
-	items, ok := structured["items"].([]any)
-	if !ok {
-		t.Fatalf("expected items slice, got %T", structured["items"])
-	}
-	if len(items) != 1 {
-		t.Fatalf("expected exactly 1 item (project scope), got %d", len(items))
-	}
-	item, _ := items[0].(map[string]any)
-	if item["scope"] != core.ScopeProject {
-		t.Fatalf("expected item scope=project, got %v", item["scope"])
-	}
-	if item["kb_id"] != "notes" {
-		t.Fatalf("expected item kb=notes, got %v", item["kb_id"])
+	if !strings.Contains(textContent, ".md") {
+		t.Fatalf("expected '.md' file extension in output, got: %s", textContent)
 	}
 
 	// list_knowledge_items with explicit scope=global should find no items
@@ -521,16 +512,9 @@ func TestMCPProjectScopeDefaultsThroughService(t *testing.T) {
 	if err != nil || globalRes.IsError {
 		t.Fatalf("list_knowledge_items global: err=%v isError=%v body=%s", err, globalRes != nil && globalRes.IsError, firstTextContent(t, globalRes.Content))
 	}
-	globalStructured, ok := globalRes.StructuredContent.(map[string]any)
-	if !ok {
-		t.Fatalf("expected structured global list result, got %T", globalRes.StructuredContent)
-	}
-	globalItems, ok := globalStructured["items"].([]any)
-	if !ok {
-		t.Fatalf("expected global items slice, got %T", globalStructured["items"])
-	}
-	if len(globalItems) != 0 {
-		t.Fatalf("expected 0 items in global scope, got %d", len(globalItems))
+	globalTextContent := firstTextContent(t, globalRes.Content)
+	if !strings.Contains(globalTextContent, "Total: 0 items") {
+		t.Fatalf("expected 'Total: 0 items' in global scope output, got: %s", globalTextContent)
 	}
 }
 

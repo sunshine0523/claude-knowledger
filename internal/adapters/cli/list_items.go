@@ -2,21 +2,23 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/kindbrave/claude-knowledger/internal/service"
 	"github.com/spf13/cobra"
 )
 
 type listItemsSummary struct {
-	ID        string   `json:"id"`
-	KBID      string   `json:"kb_id"`
-	Scope     string   `json:"scope"`
-	Type      string   `json:"type,omitempty"`
-	Title     string   `json:"title"`
-	Tags      []string `json:"tags,omitempty"`
-	UpdatedAt string   `json:"updated_at,omitempty"`
+	ID        string         `json:"id"`
+	KBID      string         `json:"kb_id"`
+	Scope     string         `json:"scope"`
+	Type      string         `json:"type,omitempty"`
+	Title     string         `json:"title"`
+	Summary   string         `json:"summary,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+	Tags      []string       `json:"tags,omitempty"`
+	UpdatedAt string         `json:"updated_at,omitempty"`
 }
 
 func newListItemsCommand(svc *service.Service) *cobra.Command {
@@ -40,23 +42,29 @@ func newListItemsCommand(svc *service.Service) *cobra.Command {
 				}
 				return nil
 			}
-			summaries := make([]listItemsSummary, 0, len(items))
-			for _, item := range items {
-				updated := ""
-				if !item.UpdatedAt.IsZero() {
-					updated = item.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z")
+			// Format as text similar to MCP
+			for i, item := range items {
+				if i > 0 {
+					fmt.Fprintln(cmd.OutOrStdout())
 				}
-				summaries = append(summaries, listItemsSummary{
-					ID:        item.ID,
-					KBID:      item.KBID,
-					Scope:     scope,
-					Type:      item.Type,
-					Title:     item.Title,
-					Tags:      item.Tags,
-					UpdatedAt: updated,
-				})
+				fmt.Fprintf(cmd.OutOrStdout(), "- %s\t%s\n", item.ID, item.Title)
+				if item.Summary != "" {
+					fmt.Fprintf(cmd.OutOrStdout(), "  Summary: %s\n", item.Summary)
+				}
+				if len(item.Metadata) > 0 {
+					fmt.Fprintln(cmd.OutOrStdout(), "  Metadata:")
+					for k, v := range item.Metadata {
+						fmt.Fprintf(cmd.OutOrStdout(), "    %s: %v\n", k, v)
+					}
+				}
+				if len(item.Tags) > 0 {
+					fmt.Fprintf(cmd.OutOrStdout(), "  Tags: [%s]\n", strings.Join(item.Tags, ", "))
+				}
+				if !item.UpdatedAt.IsZero() {
+					fmt.Fprintf(cmd.OutOrStdout(), "  Updated: %s\n", item.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"))
+				}
 			}
-			return json.NewEncoder(cmd.OutOrStdout()).Encode(summaries)
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&kbID, "kb", "", "knowledge base id")

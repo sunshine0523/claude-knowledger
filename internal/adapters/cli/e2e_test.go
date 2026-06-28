@@ -80,12 +80,13 @@ func TestEndToEndProjectScopeViaCLI(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("list-kbs: %v", err)
 	}
-	var kbs []core.KnowledgeBase
-	if err := json.Unmarshal(out.Bytes(), &kbs); err != nil {
-		t.Fatalf("decode list-kbs: %v: %s", err, out.String())
+	// Now returns text format, check it contains expected content
+	outStr := out.String()
+	if !bytes.Contains(out.Bytes(), []byte("[project:notes]")) {
+		t.Fatalf("expected '[project:notes]' in list-kbs output, got: %s", outStr)
 	}
-	if len(kbs) != 1 || kbs[0].Scope != core.ScopeProject || kbs[0].ID != "notes" {
-		t.Fatalf("expected one project notes KB, got %#v", kbs)
+	if !bytes.Contains(out.Bytes(), []byte("store=text")) {
+		t.Fatalf("expected 'store=text' in list-kbs output, got: %s", outStr)
 	}
 
 	// search default = both scopes
