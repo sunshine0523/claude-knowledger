@@ -114,7 +114,7 @@ func (i *Installer) Install(out, errOut io.Writer) error {
 	}
 
 	fmt.Fprintln(out, "Registering Knowledger MCP server...")
-	mcpInstalled, err := i.ensureMCP(runner, executable)
+	mcpInstalled, err := i.ensureMCP(runner, executable, out)
 	if err != nil {
 		return err
 	}
@@ -206,7 +206,7 @@ func (i *Installer) preflight(runner CommandRunner) (preflightResult, error) {
 	return preflightResult{plugins: plugins, marketplaces: marketplaces}, nil
 }
 
-func (i *Installer) ensureMCP(runner CommandRunner, executable string) (bool, error) {
+func (i *Installer) ensureMCP(runner CommandRunner, executable string, out io.Writer) (bool, error) {
 	result, err := runClaude(runner, "mcp", "get", mcpServerName)
 	if err != nil {
 		if isMissingMCP(result, err) {
@@ -222,7 +222,20 @@ func (i *Installer) ensureMCP(runner CommandRunner, executable string) (bool, er
 	if containsExactField(result.Stdout, executable) && containsMCPArg(result.Stdout) {
 		return true, nil
 	}
-	return false, fmt.Errorf("found conflicting Claude MCP server named knowledger. Remove it manually, then rerun the installer:\n  claude mcp remove knowledger\n  knowledger install --claude")
+
+	// Existing config is stale or wrong (e.g. executable moved, args drifted).
+	// Update it by removing the stale entry and re-adding with the current
+	// executable path so `knowledger install --claude` is idempotent.
+	fmt.Fprintln(out, "Updating stale Knowledger MCP server configuration...")
+	removeResult, removeErr := runClaude(runner, "mcp", "remove", mcpServerName)
+	if removeErr != nil {
+		return false, fmt.Errorf("found conflicting Claude MCP server named knowledger and could not remove it. Remove it manually, then rerun the installer:\n  claude mcp remove knowledger\n  knowledger install --claude\nreason: %w", commandFailedError("claude mcp remove knowledger", removeResult, removeErr))
+	}
+	addResult, addErr := runClaude(runner, "mcp", "add", "--scope", "user", mcpServerName, "--", executable, "mcp")
+	if addErr != nil {
+		return false, fmt.Errorf("failed to re-register Knowledger MCP server after removing stale config: %w", commandFailedError("claude mcp add --scope user knowledger -- "+executable+" mcp", addResult, addErr))
+	}
+	return true, nil
 }
 
 func (i *Installer) materializeBundle() (string, error) {

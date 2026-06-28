@@ -460,37 +460,38 @@ func writeKnowledgeBaseHeader(b *strings.Builder, kb core.KnowledgeBase) {
 	if scope == "" {
 		scope = core.ScopeGlobal
 	}
-	fmt.Fprintf(b, "[%s:%s]", scope, kb.ID)
-	if kb.Name != "" && kb.Name != kb.ID {
-		fmt.Fprintf(b, " %s", kb.Name)
+	name := kb.Name
+	if name == "" {
+		name = kb.ID
 	}
-	fmt.Fprintf(b, " (store=%s", kb.StoreType)
-	if !kb.Enabled {
-		b.WriteString(", disabled")
-	}
-	if len(kb.Tags) > 0 {
-		fmt.Fprintf(b, ", tags=%s", strings.Join(kb.Tags, ","))
-	}
-	b.WriteString(")\n")
+	fmt.Fprintf(b, "=== [%s:%s] %s (store=%s) ===\n", scope, kb.ID, name, kb.StoreType)
 }
 
 func writeKnowledgeBaseItems(ctx context.Context, b *strings.Builder, svc *service.Service, kb core.KnowledgeBase) {
 	items, err := svc.ListKnowledgeItems(ctx, kb.Scope, kb.ID)
 	if err != nil {
-		fmt.Fprintf(b, "  (items unavailable: %s)\n", err.Error())
+		fmt.Fprintf(b, "Error listing items: %s\n", err.Error())
 		return
 	}
 	if len(items) == 0 {
-		b.WriteString("  (empty)\n")
+		b.WriteString("(empty)\n")
 		return
 	}
+	b.WriteString("Item-ID\tTitle\tMetadata\tSummary\n")
 	for _, item := range items {
-		fmt.Fprintf(b, "  - %s\t%s", item.ID, item.Title)
-		if len(item.Tags) > 0 {
-			fmt.Fprintf(b, " [%s]", strings.Join(item.Tags, ","))
-		}
-		b.WriteByte('\n')
+		fmt.Fprintf(b, "%s\t%s\t%s\t%s\n", item.ID, item.Title, formatMetadataInline(item.Metadata), item.Summary)
 	}
+}
+
+func formatMetadataInline(metadata map[string]any) string {
+	if len(metadata) == 0 {
+		return "-"
+	}
+	var parts []string
+	for k, v := range metadata {
+		parts = append(parts, fmt.Sprintf("%s:%v", k, v))
+	}
+	return strings.Join(parts, "; ")
 }
 
 func (s *Server) handleCreateKnowledgeBase(ctx context.Context, request mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {

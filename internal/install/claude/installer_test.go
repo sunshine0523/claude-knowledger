@@ -293,10 +293,53 @@ func TestInstallUnsupportedClaudeCodeSubcommandFailsDuringPreflight(t *testing.T
 	assertPathDoesNotExist(t, filepath.Join(home, ".knowledger"))
 }
 
-func TestInstallExistingConflictingMCPServerFailsSafely(t *testing.T) {
+func TestInstallExistingStaleMCPServerIsUpdatedInPlace(t *testing.T) {
 	home := t.TempDir()
 	runner := newFakeRunner()
 	runner.runs[cmdKey("claude", "mcp", "get", "knowledger")] = runResult{result: CommandResult{Stdout: "command: /other/knowledger\nargs: [mcp]\n"}}
+	runner.runs[cmdKey("claude", "mcp", "remove", "knowledger")] = runResult{}
+	runner.runs[cmdKey("claude", "mcp", "add", "--scope", "user", "knowledger", "--", "/abs/knowledger", "mcp")] = runResult{}
+	marketplacePath := filepath.Join(home, ".knowledger", "claude-code", "marketplace")
+	runner.runs[cmdKey("claude", "plugin", "marketplace", "add", "--scope", "user", marketplacePath)] = runResult{}
+	runner.runs[cmdKey("claude", "plugin", "install", "--scope", "user", "knowledger@knowledger")] = runResult{}
+
+	installer := NewInstaller(WithRunner(runner), WithExecutablePath(func() (string, error) { return "/abs/knowledger", nil }), WithHomeDir(func() (string, error) { return home, nil }))
+	var out strings.Builder
+
+	if err := installer.Install(&out, &strings.Builder{}); err != nil {
+		t.Fatalf("Install returned error: %v", err)
+	}
+	assertCommandExists(t, runner.calls, call("claude", "mcp", "remove", "knowledger"))
+	assertCommandExists(t, runner.calls, call("claude", "mcp", "add", "--scope", "user", "knowledger", "--", "/abs/knowledger", "mcp"))
+	if !strings.Contains(out.String(), "Updating stale Knowledger MCP server configuration") {
+		t.Fatalf("stdout missing update message\nstdout:\n%s", out.String())
+	}
+}
+
+func TestInstallExistingMCPServerWithStaleExecutablePathIsUpdated(t *testing.T) {
+	home := t.TempDir()
+	runner := newFakeRunner()
+	runner.runs[cmdKey("claude", "mcp", "get", "knowledger")] = runResult{result: CommandResult{Stdout: "command: /opt/bin/knowledger-old\nargs: [mcp]\n"}}
+	runner.runs[cmdKey("claude", "mcp", "remove", "knowledger")] = runResult{}
+	runner.runs[cmdKey("claude", "mcp", "add", "--scope", "user", "knowledger", "--", "/opt/bin/knowledger", "mcp")] = runResult{}
+	marketplacePath := filepath.Join(home, ".knowledger", "claude-code", "marketplace")
+	runner.runs[cmdKey("claude", "plugin", "marketplace", "add", "--scope", "user", marketplacePath)] = runResult{}
+	runner.runs[cmdKey("claude", "plugin", "install", "--scope", "user", "knowledger@knowledger")] = runResult{}
+
+	installer := NewInstaller(WithRunner(runner), WithExecutablePath(func() (string, error) { return "/opt/bin/knowledger", nil }), WithHomeDir(func() (string, error) { return home, nil }))
+
+	if err := installer.Install(&strings.Builder{}, &strings.Builder{}); err != nil {
+		t.Fatalf("Install returned error: %v", err)
+	}
+	assertCommandExists(t, runner.calls, call("claude", "mcp", "remove", "knowledger"))
+	assertCommandExists(t, runner.calls, call("claude", "mcp", "add", "--scope", "user", "knowledger", "--", "/opt/bin/knowledger", "mcp"))
+}
+
+func TestInstallExistingMCPServerRemoveFailureErrorsGracefully(t *testing.T) {
+	home := t.TempDir()
+	runner := newFakeRunner()
+	runner.runs[cmdKey("claude", "mcp", "get", "knowledger")] = runResult{result: CommandResult{Stdout: "command: /other/knowledger\nargs: [mcp]\n"}}
+	runner.runs[cmdKey("claude", "mcp", "remove", "knowledger")] = runResult{result: CommandResult{Stderr: "remove failed"}, err: errors.New("exit status 1")}
 
 	installer := NewInstaller(WithRunner(runner), WithExecutablePath(func() (string, error) { return "/abs/knowledger", nil }), WithHomeDir(func() (string, error) { return home, nil }))
 
@@ -308,26 +351,6 @@ func TestInstallExistingConflictingMCPServerFailsSafely(t *testing.T) {
 	assertErrorContains(t, err, "claude mcp remove knowledger")
 	assertErrorContains(t, err, "knowledger install --claude")
 	assertNoCommand(t, runner.calls, call("claude", "mcp", "add", "--scope", "user", "knowledger", "--", "/abs/knowledger", "mcp"))
-	assertPathDoesNotExist(t, filepath.Join(home, ".knowledger"))
-}
-
-func TestInstallExistingMCPServerWithExecutablePrefixFailsSafely(t *testing.T) {
-	home := t.TempDir()
-	runner := newFakeRunner()
-	runner.runs[cmdKey("claude", "mcp", "get", "knowledger")] = runResult{result: CommandResult{Stdout: "command: /opt/bin/knowledger-old\nargs: [mcp]\n"}}
-
-	installer := NewInstaller(WithRunner(runner), WithExecutablePath(func() (string, error) { return "/opt/bin/knowledger", nil }), WithHomeDir(func() (string, error) { return home, nil }))
-
-	err := installer.Install(&strings.Builder{}, &strings.Builder{})
-	if err == nil {
-		t.Fatal("Install returned nil error")
-	}
-	assertErrorContains(t, err, "conflicting Claude MCP server")
-	assertErrorContains(t, err, "claude mcp remove knowledger")
-	assertErrorContains(t, err, "knowledger install --claude")
-	assertNoCommand(t, runner.calls, call("claude", "mcp", "add", "--scope", "user", "knowledger", "--", "/opt/bin/knowledger", "mcp"))
-	assertNoCommand(t, runner.calls, call("claude", "plugin", "marketplace", "add", "--scope", "user", filepath.Join(home, ".knowledger", "claude-code", "marketplace")))
-	assertNoCommand(t, runner.calls, call("claude", "plugin", "install", "--scope", "user", "knowledger@knowledger"))
 	assertPathDoesNotExist(t, filepath.Join(home, ".knowledger"))
 }
 
