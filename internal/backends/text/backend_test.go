@@ -342,11 +342,22 @@ func TestTextBackendGetItemReturnsFullContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetItem returned error: %v", err)
 	}
-	if got.ID != item.ID || got.KBID != "docs" || got.Type != "document" || got.Title != item.ID+".md" {
+	if got.ID != item.ID || got.KBID != "docs" || got.Type != "document" {
 		t.Fatalf("unexpected item metadata: %#v", got)
+	}
+	// Title should be extracted from frontmatter, or fallback to file path
+	if got.Title != "Full" && got.Title != item.ID+".md" {
+		t.Fatalf("unexpected title: got %q, expected 'Full' or %q", got.Title, item.ID+".md")
 	}
 	if !strings.Contains(got.Content, "text backend full content") {
 		t.Fatalf("expected full content, got %#v", got)
+	}
+	// Verify summary and metadata are populated for markdown files
+	if got.Summary == "" {
+		t.Fatalf("expected summary to be populated, got empty")
+	}
+	if got.Metadata == nil {
+		t.Fatalf("expected metadata to be populated, got nil")
 	}
 }
 

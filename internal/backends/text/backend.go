@@ -8,11 +8,13 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/kindbrave/claude-knowledger/internal/core"
 	"github.com/kindbrave/claude-knowledger/internal/indexing/semantic"
+	"gopkg.in/yaml.v3"
 )
 
 var supportedTextExtensions = map[string]struct{}{
@@ -260,7 +262,34 @@ func (b *Backend) ListItems(_ context.Context, kb core.KnowledgeBase) ([]core.Kn
 		if skip {
 			return nil
 		}
-		items = append(items, core.KnowledgeItem{ID: itemIDForPath(dir, path), KBID: kb.ID, Type: "document", Title: itemTitleForPath(dir, path), Content: content, CreatedAt: info.ModTime(), UpdatedAt: info.ModTime()})
+
+		// Parse frontmatter and generate summary for markdown files
+		var metadata map[string]any
+		var summary string
+		var title string
+		bodyContent := content
+
+		if strings.HasSuffix(strings.ToLower(path), ".md") {
+			metadata, bodyContent, title = parseFrontmatter(content)
+			summary = generateSummary(bodyContent, 200)
+		}
+
+		// Use title from frontmatter if available, otherwise use file path
+		if title == "" {
+			title = itemTitleForPath(dir, path)
+		}
+
+		items = append(items, core.KnowledgeItem{
+			ID:        itemIDForPath(dir, path),
+			KBID:      kb.ID,
+			Type:      "document",
+			Title:     title,
+			Content:   content,
+			Summary:   summary,
+			Metadata:  metadata,
+			CreatedAt: info.ModTime(),
+			UpdatedAt: info.ModTime(),
+		})
 		return nil
 	}); err != nil {
 		return nil, err
@@ -291,12 +320,31 @@ func (b *Backend) GetItem(_ context.Context, kb core.KnowledgeBase, itemID strin
 	if err != nil {
 		return core.KnowledgeItem{}, err
 	}
+
+	// Parse frontmatter and generate summary for markdown files
+	var metadata map[string]any
+	var summary string
+	var title string
+	bodyContent := content
+
+	if strings.HasSuffix(strings.ToLower(originalPath), ".md") {
+		metadata, bodyContent, title = parseFrontmatter(content)
+		summary = generateSummary(bodyContent, 200)
+	}
+
+	// Use title from frontmatter if available, otherwise use file path
+	if title == "" {
+		title = itemTitleForPath(originalBase, originalPath)
+	}
+
 	return core.KnowledgeItem{
 		ID:        itemIDForPath(originalBase, originalPath),
 		KBID:      kb.ID,
 		Type:      "document",
-		Title:     itemTitleForPath(originalBase, originalPath),
+		Title:     title,
 		Content:   content,
+		Summary:   summary,
+		Metadata:  metadata,
 		CreatedAt: originalInfo.ModTime(),
 		UpdatedAt: originalInfo.ModTime(),
 	}, nil
@@ -388,6 +436,78 @@ func itemTitleForPath(dir string, path string) string {
 		return filepath.Base(path)
 	}
 	return filepath.ToSlash(rel)
+}
+
+// parseFrontmatter extracts YAML frontmatter from markdown content.
+// Returns metadata, content without frontmatter, and title from frontmatter if available.
+func parseFrontmatter(content string) (metadata map[string]any, bodyContent string, title string) {
+	metadata = make(map[string]any)
+	bodyContent = content
+
+	// Match YAML frontmatter: ---\n...\n---
+	re := regexp.MustCompile(`(?s)^---\s*\n(.*?)\n---\s*\n(.*)$`)
+	matches := re.FindStringSubmatch(content)
+
+	if len(matches) != 3 {
+		return metadata, bodyContent, ""
+	}
+
+	// Parse YAML frontmatter
+	yamlContent := matches[1]
+	bodyContent = matches[2]
+
+	var frontmatter map[string]any
+	if err := yaml.Unmarshal([]byte(yamlContent), &frontmatter); err == nil {
+		metadata = frontmatter
+		// Extract title if present
+		if t, ok := frontmatter["title"].(string); ok {
+			title = t
+		}
+	}
+
+	return metadata, bodyContent, title
+}
+
+// generateSummary creates a summary from content (first few sentences or first paragraph).
+func generateSummary(content string, maxLen int) string {
+	if maxLen == 0 {
+		maxLen = 200
+	}
+
+	// Remove multiple newlines and trim
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ""
+	}
+
+	// Try to get first paragraph
+	paragraphs := strings.Split(content, "\n\n")
+	firstPara := strings.TrimSpace(paragraphs[0])
+
+	// Remove markdown headers
+	firstPara = regexp.MustCompile(`^#+\s+`).ReplaceAllString(firstPara, "")
+
+	// If first paragraph is too long, truncate at sentence boundary
+	if len(firstPara) > maxLen {
+		sentences := regexp.MustCompile(`[.!?]+\s+`).Split(firstPara, -1)
+		summary := ""
+		for _, sentence := range sentences {
+			if len(summary)+len(sentence) > maxLen {
+				break
+			}
+			if summary != "" {
+				summary += ". "
+			}
+			summary += strings.TrimSpace(sentence)
+		}
+		if summary != "" {
+			return summary + "..."
+		}
+		// Fallback: hard truncate
+		return firstPara[:maxLen] + "..."
+	}
+
+	return firstPara
 }
 
 func safeItemPath(dir string, itemID string) (string, error) {

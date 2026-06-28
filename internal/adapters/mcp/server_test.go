@@ -495,12 +495,12 @@ func TestMCPProjectScopeDefaultsThroughService(t *testing.T) {
 	}
 	// Now returns text format, check it contains expected content
 	textContent := firstTextContent(t, listRes.Content)
-	// Text backend uses file path as title, not the input title
 	if !strings.Contains(textContent, "Total: 1 items") {
 		t.Fatalf("expected 'Total: 1 items' in output, got: %s", textContent)
 	}
-	if !strings.Contains(textContent, ".md") {
-		t.Fatalf("expected '.md' file extension in output, got: %s", textContent)
+	// Title should be extracted from frontmatter
+	if !strings.Contains(textContent, "Project Doc") {
+		t.Fatalf("expected 'Project Doc' title in output, got: %s", textContent)
 	}
 
 	// list_knowledge_items with explicit scope=global should find no items
