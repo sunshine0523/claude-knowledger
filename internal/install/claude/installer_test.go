@@ -83,7 +83,7 @@ func TestInstallFreshInstallRegistersMCPMarketplaceAndPlugin(t *testing.T) {
 	runner.runs[cmdKey("claude", "mcp", "add", "--scope", "user", "knowledger", "--", exe, "mcp")] = runResult{}
 	marketplacePath := filepath.Join(home, ".knowledger", "claude-code", "marketplace")
 	runner.runs[cmdKey("claude", "plugin", "marketplace", "add", "--scope", "user", marketplacePath)] = runResult{}
-	runner.runs[cmdKey("claude", "plugin", "install", "--scope", "user", "claude-code-knowledger@knowledger")] = runResult{}
+	runner.runs[cmdKey("claude", "plugin", "install", "--scope", "user", "knowledger@knowledger")] = runResult{}
 
 	installer := NewInstaller(WithRunner(runner), WithExecutablePath(func() (string, error) { return exe, nil }), WithHomeDir(func() (string, error) { return home, nil }))
 	var out strings.Builder
@@ -103,7 +103,7 @@ func TestInstallFreshInstallRegistersMCPMarketplaceAndPlugin(t *testing.T) {
 		call("claude", "mcp", "get", "knowledger"),
 		call("claude", "mcp", "add", "--scope", "user", "knowledger", "--", exe, "mcp"),
 		call("claude", "plugin", "marketplace", "add", "--scope", "user", marketplacePath),
-		call("claude", "plugin", "install", "--scope", "user", "claude-code-knowledger@knowledger"),
+		call("claude", "plugin", "install", "--scope", "user", "knowledger@knowledger"),
 	})
 	assertFileExists(t, filepath.Join(marketplacePath, ".claude-plugin", "plugin.json"))
 	assertFileExists(t, filepath.Join(marketplacePath, ".claude-plugin", "marketplace.json"))
@@ -143,7 +143,7 @@ func TestInstallTreatsRealClaudeMissingMCPStderrAsMissing(t *testing.T) {
 	runner.runs[cmdKey("claude", "mcp", "add", "--scope", "user", "knowledger", "--", exe, "mcp")] = runResult{}
 	marketplacePath := filepath.Join(home, ".knowledger", "claude-code", "marketplace")
 	runner.runs[cmdKey("claude", "plugin", "marketplace", "add", "--scope", "user", marketplacePath)] = runResult{}
-	runner.runs[cmdKey("claude", "plugin", "install", "--scope", "user", "claude-code-knowledger@knowledger")] = runResult{}
+	runner.runs[cmdKey("claude", "plugin", "install", "--scope", "user", "knowledger@knowledger")] = runResult{}
 
 	installer := NewInstaller(WithRunner(runner), WithExecutablePath(func() (string, error) { return exe, nil }), WithHomeDir(func() (string, error) { return home, nil }))
 
@@ -158,13 +158,13 @@ func TestInstallTreatsRealClaudeNoMCPNamedStderrAsMissing(t *testing.T) {
 	exe := filepath.Join(home, "bin", "knowledger")
 	runner := newFakeRunner()
 	runner.runs[cmdKey("claude", "mcp", "get", "knowledger")] = runResult{
-		result: CommandResult{Stderr: `No MCP server named "knowledger". Configured servers: codegraph, plugin:claude-code-knowledger:knowledger, plugin:oh-my-claudecode:t`},
+		result: CommandResult{Stderr: `No MCP server named "knowledger". Configured servers: codegraph, plugin:knowledger:kl, plugin:oh-my-claudecode:t`},
 		err:    errors.New("exit status 1"),
 	}
 	runner.runs[cmdKey("claude", "mcp", "add", "--scope", "user", "knowledger", "--", exe, "mcp")] = runResult{}
 	marketplacePath := filepath.Join(home, ".knowledger", "claude-code", "marketplace")
 	runner.runs[cmdKey("claude", "plugin", "marketplace", "add", "--scope", "user", marketplacePath)] = runResult{}
-	runner.runs[cmdKey("claude", "plugin", "install", "--scope", "user", "claude-code-knowledger@knowledger")] = runResult{}
+	runner.runs[cmdKey("claude", "plugin", "install", "--scope", "user", "knowledger@knowledger")] = runResult{}
 
 	installer := NewInstaller(WithRunner(runner), WithExecutablePath(func() (string, error) { return exe, nil }), WithHomeDir(func() (string, error) { return home, nil }))
 
@@ -184,7 +184,7 @@ func TestInstallFreshInstallMaterializesMarketplaceDirectoriesWith0755Permission
 	runner := newFakeRunner()
 	runner.runs[cmdKey("claude", "mcp", "add", "--scope", "user", "knowledger", "--", exe, "mcp")] = runResult{}
 	runner.runs[cmdKey("claude", "plugin", "marketplace", "add", "--scope", "user", marketplacePath)] = runResult{}
-	runner.runs[cmdKey("claude", "plugin", "install", "--scope", "user", "claude-code-knowledger@knowledger")] = runResult{}
+	runner.runs[cmdKey("claude", "plugin", "install", "--scope", "user", "knowledger@knowledger")] = runResult{}
 
 	installer := NewInstaller(WithRunner(runner), WithExecutablePath(func() (string, error) { return exe, nil }), WithHomeDir(func() (string, error) { return home, nil }))
 
@@ -232,7 +232,7 @@ func TestInstallIdempotentRerunSkipsExistingRegistrations(t *testing.T) {
 	runner := newFakeRunner()
 	runner.runs[cmdKey("claude", "mcp", "get", "knowledger")] = runResult{result: CommandResult{Stdout: fmt.Sprintf("command: %s\nargs: [mcp]\n", exe)}}
 	runner.runs[cmdKey("claude", "plugin", "marketplace", "list", "--json")] = runResult{result: CommandResult{Stdout: fmt.Sprintf(`[{"name":"knowledger","source":%q}]`, marketplacePath)}}
-	runner.runs[cmdKey("claude", "plugin", "list", "--json")] = runResult{result: CommandResult{Stdout: `[{"id":"claude-code-knowledger@knowledger","version":"dev","scope":"user","enabled":true}]`}}
+	runner.runs[cmdKey("claude", "plugin", "list", "--json")] = runResult{result: CommandResult{Stdout: `[{"id":"knowledger@knowledger","version":"dev","scope":"user","enabled":true}]`}}
 
 	installer := NewInstaller(WithRunner(runner), WithExecutablePath(func() (string, error) { return exe, nil }), WithHomeDir(func() (string, error) { return home, nil }))
 	var out strings.Builder
@@ -327,7 +327,7 @@ func TestInstallExistingMCPServerWithExecutablePrefixFailsSafely(t *testing.T) {
 	assertErrorContains(t, err, "knowledger install --claude")
 	assertNoCommand(t, runner.calls, call("claude", "mcp", "add", "--scope", "user", "knowledger", "--", "/opt/bin/knowledger", "mcp"))
 	assertNoCommand(t, runner.calls, call("claude", "plugin", "marketplace", "add", "--scope", "user", filepath.Join(home, ".knowledger", "claude-code", "marketplace")))
-	assertNoCommand(t, runner.calls, call("claude", "plugin", "install", "--scope", "user", "claude-code-knowledger@knowledger"))
+	assertNoCommand(t, runner.calls, call("claude", "plugin", "install", "--scope", "user", "knowledger@knowledger"))
 	assertPathDoesNotExist(t, filepath.Join(home, ".knowledger"))
 }
 
@@ -350,7 +350,7 @@ func TestInstallExistingConflictingMarketplaceAfterFreshMCPAddKeepsPartialSucces
 	assertErrorContains(t, err, "claude plugin marketplace remove knowledger")
 	assertCommandExists(t, runner.calls, call("claude", "mcp", "add", "--scope", "user", "knowledger", "--", "/abs/knowledger", "mcp"))
 	assertNoCommand(t, runner.calls, call("claude", "plugin", "marketplace", "add", "--scope", "user", filepath.Join(home, ".knowledger", "claude-code", "marketplace")))
-	assertNoCommand(t, runner.calls, call("claude", "plugin", "install", "--scope", "user", "claude-code-knowledger@knowledger"))
+	assertNoCommand(t, runner.calls, call("claude", "plugin", "install", "--scope", "user", "knowledger@knowledger"))
 }
 
 func TestInstallPluginInstallFailureAfterMCPSuccessKeepsPartialSuccess(t *testing.T) {
@@ -359,7 +359,7 @@ func TestInstallPluginInstallFailureAfterMCPSuccessKeepsPartialSuccess(t *testin
 	runner := newFakeRunner()
 	runner.runs[cmdKey("claude", "mcp", "add", "--scope", "user", "knowledger", "--", "/abs/knowledger", "mcp")] = runResult{}
 	runner.runs[cmdKey("claude", "plugin", "marketplace", "add", "--scope", "user", marketplacePath)] = runResult{}
-	runner.runs[cmdKey("claude", "plugin", "install", "--scope", "user", "claude-code-knowledger@knowledger")] = runResult{result: CommandResult{Stderr: "install exploded"}, err: errors.New("exit status 1")}
+	runner.runs[cmdKey("claude", "plugin", "install", "--scope", "user", "knowledger@knowledger")] = runResult{result: CommandResult{Stderr: "install exploded"}, err: errors.New("exit status 1")}
 
 	installer := NewInstaller(WithRunner(runner), WithExecutablePath(func() (string, error) { return "/abs/knowledger", nil }), WithHomeDir(func() (string, error) { return home, nil }))
 
@@ -368,7 +368,7 @@ func TestInstallPluginInstallFailureAfterMCPSuccessKeepsPartialSuccess(t *testin
 		t.Fatal("Install returned nil error")
 	}
 	assertErrorContains(t, err, "MCP server is installed but plugin installation failed")
-	assertErrorContains(t, err, "claude plugin install --scope user claude-code-knowledger@knowledger")
+	assertErrorContains(t, err, "claude plugin install --scope user knowledger@knowledger")
 	assertErrorContains(t, err, "install exploded")
 	assertNoCommand(t, runner.calls, call("claude", "mcp", "remove", "knowledger"))
 }
@@ -394,7 +394,7 @@ func TestInstallBundleMaterializationFailureStopsBeforeMarketplaceMutation(t *te
 	assertErrorContains(t, err, "materialize")
 	assertNoCommand(t, runner.calls, call("claude", "mcp", "remove", "knowledger"))
 	assertNoCommand(t, runner.calls, call("claude", "plugin", "marketplace", "add", "--scope", "user", filepath.Join(homeFile, ".knowledger", "claude-code", "marketplace")))
-	assertNoCommand(t, runner.calls, call("claude", "plugin", "install", "--scope", "user", "claude-code-knowledger@knowledger"))
+	assertNoCommand(t, runner.calls, call("claude", "plugin", "install", "--scope", "user", "knowledger@knowledger"))
 }
 
 func TestInstallFallsBackToLookPathWhenExecutablePathCannotResolve(t *testing.T) {
@@ -405,7 +405,7 @@ func TestInstallFallsBackToLookPathWhenExecutablePathCannotResolve(t *testing.T)
 	runner.lookPath["knowledger"] = lookPathResult{path: exe}
 	runner.runs[cmdKey("claude", "mcp", "add", "--scope", "user", "knowledger", "--", exe, "mcp")] = runResult{}
 	runner.runs[cmdKey("claude", "plugin", "marketplace", "add", "--scope", "user", marketplacePath)] = runResult{}
-	runner.runs[cmdKey("claude", "plugin", "install", "--scope", "user", "claude-code-knowledger@knowledger")] = runResult{}
+	runner.runs[cmdKey("claude", "plugin", "install", "--scope", "user", "knowledger@knowledger")] = runResult{}
 
 	installer := NewInstaller(WithRunner(runner), WithExecutablePath(func() (string, error) { return "", errors.New("os executable failed") }), WithHomeDir(func() (string, error) { return home, nil }))
 

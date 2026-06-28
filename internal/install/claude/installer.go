@@ -14,12 +14,12 @@ import (
 	"strings"
 	"time"
 
-	pluginbundle "github.com/kindbrave/claude-knowledger/plugins/claude-code-knowledger"
+	pluginbundle "github.com/kindbrave/claude-knowledger/plugins/knowledger"
 )
 
 const (
 	mcpServerName = "knowledger"
-	pluginID      = "claude-code-knowledger@knowledger"
+	pluginID      = "knowledger@knowledger"
 )
 
 var bundleFiles = []string{

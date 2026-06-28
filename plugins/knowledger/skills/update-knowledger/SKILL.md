@@ -73,4 +73,4 @@ Report the version and confirm plugin is active.
 ## Error Handling
 
 - If `curl`/`irm` fails → check network connectivity, verify GitHub is reachable
-- If `knowledger install --claude` fails → report, suggest `claude plugin validate ./plugins/claude-code-knowledger`
+- If `knowledger install --claude` fails → report, suggest `claude plugin validate ./plugins/knowledger`

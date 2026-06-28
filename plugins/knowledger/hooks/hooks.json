@@ -21,6 +21,20 @@
           }
         ]
       }
+    ],
+    "SkillInvoke": [
+      {
+        "match": {
+          "skill": "superpowers:requesting-code-review"
+        },
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/code-review-precheck\"",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }

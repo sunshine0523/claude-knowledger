@@ -474,10 +474,7 @@ func ensureContained(base string, path string) error {
 
 func (b *Backend) MaintainIndex(ctx context.Context, kb core.KnowledgeBase, opts core.IndexOptions) (core.IndexResult, error) {
 	if !b.supportsKBSemantic(kb) {
-		return core.IndexResult{
-			Skipped:  1,
-			Warnings: []string{fmt.Sprintf("%s: semantic indexing is not enabled for this knowledge base", kb.ID)},
-		}, nil
+		return core.IndexResult{}, nil
 	}
 	dir, _ := kb.StoreConfig["path"].(string)
 	source := func(c context.Context) ([]core.KnowledgeItem, error) { return b.ListItems(c, kb) }

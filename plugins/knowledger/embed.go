@@ -1,4 +1,4 @@
-package claudecodeknowledger
+package knowledger
 
 import "embed"
 
