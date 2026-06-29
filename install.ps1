@@ -5,8 +5,8 @@ $Binary = "knowledger.exe"
 
 $Arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq "Arm64") { "arm64" } else { "amd64" }
 
-$Release = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases/latest"
-$Version = $Release.tag_name.TrimStart("v")
+$Response = Invoke-WebRequest "https://github.com/$Repo/releases/latest" -MaximumRedirection 0 -ErrorAction SilentlyContinue
+$Version = ($Response.Headers.Location -split '/v')[-1]
 $Archive = "claude-knowledger_${Version}_windows_${Arch}.zip"
 $Url = "https://github.com/$Repo/releases/download/v${Version}/$Archive"
 

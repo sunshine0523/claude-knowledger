@@ -4,24 +4,54 @@ command -v knowledger >/dev/null 2>&1 || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
 
 knowledger kb-git-knowledge-list 2>/dev/null | python3 -c "
-import json, sys, subprocess
+import json, os, sys, subprocess
+
+env = {**os.environ, 'LC_ALL': 'C', 'LANG': 'C'}
+
+lines = []
 try:
     kbs = json.load(sys.stdin)
 except Exception:
     sys.exit(0)
-for kb in kbs:
-    scope, kid = kb.get('scope', 'global'), kb.get('id', '')
-    if not kid:
-        continue
-    r = subprocess.run(
-        ['knowledger', '--scope', scope, 'kb-git-knowledge-pull', '--id', kid],
-        capture_output=True, text=True
-    )
-    if r.returncode == 0 and 'Already up to date.' not in r.stdout:
-        subprocess.run(
-            ['knowledger', '--scope', scope, 'index', '--kb', kid, '--quiet'],
-            capture_output=True
+
+if not kbs:
+    lines.append('git-sync: no git knowledge bases configured')
+else:
+    for kb in kbs:
+        scope, kid = kb.get('scope', 'global'), kb.get('id', '')
+        if not kid:
+            continue
+        r = subprocess.run(
+            ['knowledger', 'kb-git-knowledge-pull', '--id', kid],
+            capture_output=True, text=True, env=env,
         )
-" 2>/dev/null || true
+        if r.returncode != 0:
+            err = r.stderr.strip() or r.stdout.strip() or 'unknown error'
+            lines.append(f'git-sync: [{kid}] sync failed: {err}')
+            continue
+        if 'Already up to date.' in r.stdout:
+            lines.append(f'git-sync: [{kid}] already up to date')
+            continue
+        idx = subprocess.run(
+            ['knowledger', 'index', '--kb', kid, '--quiet'],
+            capture_output=True, text=True, env=env,
+        )
+        if idx.returncode != 0:
+            err = idx.stderr.strip() or idx.stdout.strip() or 'unknown error'
+            lines.append(f'git-sync: [{kid}] pulled new changes but reindex failed: {err}')
+        else:
+            lines.append(f'git-sync: [{kid}] updated successfully')
+
+if lines:
+    msg = '\n'.join(lines)
+    payload = {
+        'systemMessage': msg,
+        'hookSpecificOutput': {
+            'hookEventName': 'SessionStart',
+            'additionalContext': msg,
+        },
+    }
+    print(json.dumps(payload))
+" || true
 
 exit 0
