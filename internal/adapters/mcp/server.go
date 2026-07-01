@@ -294,13 +294,12 @@ func (s *Server) registerTools() {
 	)
 	gitKnowledgeListTool := mcpgo.NewTool(
 		"git_knowledge_list",
-		mcpgo.WithDescription("List all git-knowledge knowledge bases from global (~/.knowledger/git-knowledge/) and project (.knowledger/git-knowledge/) directories."),
+		mcpgo.WithDescription("List all git-knowledge knowledge bases from global (~/.knowledger/git-knowledge/) and project (.knowledger/git-knowledge/) directories. Only returns directories that are still registered as knowledge bases."),
 		mcpgo.WithReadOnlyHintAnnotation(true),
 		mcpgo.WithDestructiveHintAnnotation(false),
 		mcpgo.WithIdempotentHintAnnotation(true),
 		mcpgo.WithOpenWorldHintAnnotation(false),
 	)
-
 	s.tools = []mcpgo.Tool{getTool, listItemsTool, addTool, deleteTool, listTool, createKBTool, deleteKBTool, indexTool, gitKnowledgeAddTool, gitKnowledgePullTool, gitKnowledgeListTool}
 	s.server.AddTool(getTool, s.handleGetKnowledgeItem)
 	s.server.AddTool(listItemsTool, s.handleListKnowledgeItems)
@@ -537,6 +536,25 @@ func (s *Server) handleDeleteKnowledgeBase(ctx context.Context, request mcpgo.Ca
 	id := strings.TrimSpace(input.ID)
 	if id == "" {
 		return mcpgo.NewToolResultError("knowledge base id is required"), nil
+	}
+	// If this is a git-knowledge base, resolve and clean up the local clone
+	// directory after removing the KB record.
+	clonePath, _ := gitKnowledgePath(s.svc, scope, id)
+	if clonePath != "" {
+		if info, err := os.Stat(clonePath); err == nil && info.IsDir() {
+			if err := s.svc.DeleteKnowledgeBase(ctx, scope, id); err != nil {
+				return mcpgo.NewToolResultError(err.Error()), nil
+			}
+			if err := os.RemoveAll(clonePath); err != nil {
+				return mcpgo.NewToolResultError(fmt.Sprintf("knowledge base deleted but failed to remove local directory %s: %v", clonePath, err)), nil
+			}
+			return mcpgo.NewToolResultStructuredOnly(map[string]any{
+				"deleted": true,
+				"scope":   scope,
+				"id":      id,
+				"path":    clonePath,
+			}), nil
+		}
 	}
 	if err := s.svc.DeleteKnowledgeBase(ctx, scope, id); err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil

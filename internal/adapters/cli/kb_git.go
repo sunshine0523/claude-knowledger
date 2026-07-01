@@ -123,13 +123,36 @@ func newKBGitKnowledgeListCommand(svc *service.Service) *cobra.Command {
 				ID    string `json:"id"`
 				Path  string `json:"path"`
 			}
+			// Build a set of registered git-knowledge paths so orphaned
+			// directories (whose KB record was already deleted) are not
+			// surfaced.
+			registered := make(map[string]struct{})
+			if svc != nil {
+				for _, kb := range svc.ListKnowledgeBases() {
+					if kb.StoreType != "text" {
+						continue
+					}
+					path, _ := kb.StoreConfig["path"].(string)
+					if path == "" {
+						continue
+					}
+					clean := filepath.Clean(path)
+					if filepath.Base(filepath.Dir(clean)) == "git-knowledge" {
+						registered[clean] = struct{}{}
+					}
+				}
+			}
 			var results []entry
 			if home, err := os.UserHomeDir(); err == nil {
 				dir := filepath.Join(home, ".knowledger", "git-knowledge")
 				if entries, err := os.ReadDir(dir); err == nil {
 					for _, e := range entries {
-						if e.IsDir() {
-							results = append(results, entry{"global", e.Name(), filepath.Join(dir, e.Name())})
+						if !e.IsDir() {
+							continue
+						}
+						full := filepath.Join(dir, e.Name())
+						if _, ok := registered[filepath.Clean(full)]; ok {
+							results = append(results, entry{"global", e.Name(), full})
 						}
 					}
 				}
@@ -138,8 +161,12 @@ func newKBGitKnowledgeListCommand(svc *service.Service) *cobra.Command {
 				dir := filepath.Join(svc.ProjectRoot(), ".knowledger", "git-knowledge")
 				if entries, err := os.ReadDir(dir); err == nil {
 					for _, e := range entries {
-						if e.IsDir() {
-							results = append(results, entry{"project", e.Name(), filepath.Join(dir, e.Name())})
+						if !e.IsDir() {
+							continue
+						}
+						full := filepath.Join(dir, e.Name())
+						if _, ok := registered[filepath.Clean(full)]; ok {
+							results = append(results, entry{"project", e.Name(), full})
 						}
 					}
 				}
